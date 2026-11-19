@@ -4,7 +4,7 @@ import type { editor } from 'monaco-editor';
 import { format } from 'sql-formatter';
 import { useVSCode } from '../../context/VSCodeContext';
 import { useFormatOptions } from '../Toolbar/FormatButton';
-import { useEditorSetup, useEditorActions, useCompletionProvider, useSchemaProviders, useWildcardExpansion, useVariableHighlight, useCteHighlight, useAiInlineCompletions, useHostSnippetCompletions } from './hooks';
+import { useEditorSetup, useEditorActions, useExecuteActions, useCompletionProvider, useSchemaProviders, useWildcardExpansion, useVariableHighlight, useCteHighlight, useAiInlineCompletions, useHostSnippetCompletions } from './hooks';
 import './SqlEditor.css';
 
 export interface SqlEditorHandle {
@@ -218,9 +218,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const registerActions = useEditorActions({
       editorRef, monacoRef, dbSchemaRef, currentConnectionIdRef, currentDatabaseRef,
       lastContextPositionRef, tableAtCursorContextKeyRef,
-      onExecute, requestPaste, postMessage, currentConnectionId, currentDatabase,
+      requestPaste, postMessage, currentConnectionId, currentDatabase,
     });
 
+    useExecuteActions(
+      editorRef, monacoRef, editorReady, onExecute,
+      config.executeQueryKeybindings, config.executeCurrentStatementKeybindings
+    );
     useCompletionProvider(monacoRef, dbSchema, editorReady);
     useHostSnippetCompletions(monacoRef, editorReady, postMessage);
     useAiInlineCompletions(monacoRef, dbSchemaRef, editorReady, postMessage);

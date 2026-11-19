@@ -168,7 +168,6 @@ describe('useEditorActions', () => {
       currentDatabaseRef: { current: undefined } as any,
       lastContextPositionRef: { current: null } as any,
       tableAtCursorContextKeyRef: { current: null } as any,
-      onExecute: vi.fn(),
       requestPaste: vi.fn(),
       postMessage: vi.fn(),
     };
@@ -186,7 +185,6 @@ describe('useEditorActions', () => {
       currentDatabaseRef: { current: undefined } as any,
       lastContextPositionRef: { current: null } as any,
       tableAtCursorContextKeyRef: { current: null } as any,
-      onExecute: vi.fn(),
       requestPaste: vi.fn(),
       postMessage: vi.fn(),
     };
@@ -197,11 +195,10 @@ describe('useEditorActions', () => {
     const mockMonaco = createMockMonaco();
     result.current(mockEditor as any, mockMonaco as any);
 
-    // 5 keybinding actions + 3 script actions = 8 addAction calls
-    expect(mockEditor.addAction).toHaveBeenCalledTimes(8);
+    // 4 keybinding actions + 3 script actions = 7 addAction calls
+    expect(mockEditor.addAction).toHaveBeenCalledTimes(7);
 
     const actionIds = mockEditor.addAction.mock.calls.map((c: any) => c[0].id);
-    expect(actionIds).toContain('execute-query');
     expect(actionIds).toContain('paste');
     expect(actionIds).toContain('cut');
     expect(actionIds).toContain('save-query');
@@ -220,7 +217,6 @@ describe('useEditorActions', () => {
       currentDatabaseRef: { current: undefined } as any,
       lastContextPositionRef: { current: null } as any,
       tableAtCursorContextKeyRef: { current: null } as any,
-      onExecute: vi.fn(),
       requestPaste: vi.fn(),
       postMessage: vi.fn(),
     };
@@ -249,7 +245,6 @@ describe('useEditorActions', () => {
       currentDatabaseRef: { current: undefined } as any,
       lastContextPositionRef: { current: null } as any,
       tableAtCursorContextKeyRef: { current: null } as any,
-      onExecute: vi.fn(),
       requestPaste: vi.fn(),
       postMessage: vi.fn(),
     };
@@ -272,7 +267,6 @@ describe('useEditorActions', () => {
       currentDatabaseRef: { current: undefined } as any,
       lastContextPositionRef: { current: null } as any,
       tableAtCursorContextKeyRef: { current: null } as any,
-      onExecute: vi.fn(),
       requestPaste: vi.fn(),
       postMessage: vi.fn(),
     };

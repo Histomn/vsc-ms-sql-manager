@@ -19,7 +19,6 @@ export interface EditorActionsDeps {
   currentDatabaseRef: MutableRefObject<string | null | undefined>;
   lastContextPositionRef: MutableRefObject<{ lineNumber: number; column: number } | null>;
   tableAtCursorContextKeyRef: MutableRefObject<any>;
-  onExecute: (sql: string) => void;
   requestPaste: () => void;
   postMessage: (message: OutgoingMessage) => void;
   currentConnectionId?: string | null;
@@ -57,7 +56,7 @@ export function findTableAtCursorPosition(
 }
 
 /**
- * Registers keybindings (F5, Ctrl+V, Ctrl+S, Ctrl+N) and context menu
+ * Registers keybindings (Ctrl+V, Ctrl+X, Ctrl+S, Ctrl+N) and context menu
  * actions (Script as INSERT/UPDATE/DELETE) on the given Monaco editor.
  * Returns a callback to be called inside handleEditorMount.
  */
@@ -68,7 +67,6 @@ export function useEditorActions(deps: EditorActionsDeps) {
     currentDatabaseRef,
     lastContextPositionRef,
     tableAtCursorContextKeyRef,
-    onExecute,
     requestPaste,
     postMessage,
     currentConnectionId,
@@ -77,28 +75,7 @@ export function useEditorActions(deps: EditorActionsDeps) {
 
   const registerActions = useCallback(
     (editor: editor.IStandaloneCodeEditor, monacoInstance: MonacoType) => {
-      // Execute query (F5 / Ctrl+Shift+E)
-      editor.addAction({
-        id: 'execute-query',
-        label: 'Execute Query',
-        keybindings: [
-          monacoInstance.KeyCode.F5,
-          monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Shift | monacoInstance.KeyCode.KeyE,
-        ],
-        run: () => {
-          const selection = editor.getSelection();
-          const model = editor.getModel();
-          if (!model) return;
-
-          const sql = selection && !selection.isEmpty()
-            ? model.getValueInRange(selection)
-            : model.getValue();
-
-          if (sql.trim()) {
-            onExecute(sql);
-          }
-        },
-      });
+      // Note: the execute actions (configurable keys) live in useExecuteActions.
 
       // Paste (Ctrl+V)
       editor.addAction({
@@ -268,7 +245,7 @@ export function useEditorActions(deps: EditorActionsDeps) {
         },
       });
     },
-    [onExecute, requestPaste, postMessage, currentConnectionId, currentDatabase]
+    [requestPaste, postMessage, currentConnectionId, currentDatabase]
   );
 
   return registerActions;

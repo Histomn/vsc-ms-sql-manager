@@ -66,7 +66,7 @@ export function ExecuteButton({
           className="main-button"
           onClick={onExecute}
           disabled={disabled}
-          title="Execute Query (F5 or Ctrl+Shift+E)"
+          title="Execute Query"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"

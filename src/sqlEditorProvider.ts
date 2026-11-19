@@ -105,6 +105,8 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                     const cteHighlightColor = config.get<string>('cteHighlightColor', '#6adc7a');
                     const jsonXmlHighlightColor = config.get<string>('jsonXmlHighlightColor', '#2563eb');
                     const multipleResultSetsDisplay = config.get<string>('multipleResultSetsDisplay', 'single-view');
+                    const executeQueryKeybindings = config.get<string>('keybindings.executeQuery', 'f5, ctrl+shift+e');
+                    const executeCurrentStatementKeybindings = config.get<string>('keybindings.executeCurrentStatement', 'ctrl+enter');
                     webviewPanel.webview.postMessage({
                         type: 'config',
                         config: {
@@ -113,7 +115,9 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                             variableHighlightColor,
                             cteHighlightColor,
                             jsonXmlHighlightColor,
-                            multipleResultSetsDisplay
+                            multipleResultSetsDisplay,
+                            executeQueryKeybindings,
+                            executeCurrentStatementKeybindings
                         }
                     });
 
@@ -2182,9 +2186,11 @@ COMMIT TRANSACTION;
                         const cteHighlightColor = config.get<string>('cteHighlightColor', '#6adc7a');
                         const jsonXmlHighlightColor = config.get<string>('jsonXmlHighlightColor', '#2563eb');
                         const multipleResultSetsDisplay = config.get<string>('multipleResultSetsDisplay', 'single-view');
+                        const executeQueryKeybindings = config.get<string>('keybindings.executeQuery', 'f5, ctrl+shift+e');
+                        const executeCurrentStatementKeybindings = config.get<string>('keybindings.executeCurrentStatement', 'ctrl+enter');
                         panel.webview.postMessage({
                             type: 'config',
-                            config: { colorPrimaryForeignKeys, numberFormat, variableHighlightColor, cteHighlightColor, jsonXmlHighlightColor, multipleResultSetsDisplay }
+                            config: { colorPrimaryForeignKeys, numberFormat, variableHighlightColor, cteHighlightColor, jsonXmlHighlightColor, multipleResultSetsDisplay, executeQueryKeybindings, executeCurrentStatementKeybindings }
                         });
                     }
 

@@ -1,6 +1,7 @@
 export { useCompletionProvider } from './useCompletionProvider';
 export { useEditorActions, findTableAtCursorPosition } from './useEditorActions';
 export type { EditorActionsDeps } from './useEditorActions';
+export { useExecuteActions } from './useExecuteActions';
 export { useEditorSetup } from './useEditorSetup';
 export { useSchemaProviders } from './useSchemaProviders';
 export { useCteHighlight } from './useCteHighlight';

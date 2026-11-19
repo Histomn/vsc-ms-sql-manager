@@ -679,7 +679,7 @@ export function ResultsPanel() {
             ) : (
               <>
                 <p>Execute a query to see results</p>
-                <p className="hint">Press F5 or Ctrl+Shift+E to run</p>
+                <p className="hint">Press F5 or Ctrl+Shift+E to run (configurable in settings)</p>
               </>
             )}
           </div>

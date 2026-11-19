@@ -1452,6 +1452,16 @@
           "default": "",
           "description": "Workstation ID sent to SQL Server (visible as host_name / HOST_NAME()). Leave empty to use the driver default. Applies to new connections (SQL authentication)."
         },
+        "mssqlManager.keybindings.executeQuery": {
+          "type": "string",
+          "default": "f5, ctrl+shift+e",
+          "markdownDescription": "Keybindings for **Execute Query** (runs the selection, or the whole file) inside the SQL editor. Comma-separated, for example `f5, ctrl+shift+e`. Modifiers: `ctrl`, `cmd`, `alt`, `shift` (`ctrl` and `cmd` both mean Ctrl on Windows/Linux and Cmd on macOS). Keys: `a-z`, `0-9`, `f1-f24`, `enter`, `space`, `tab`, arrows, etc. Applies when a SQL editor is opened."
+        },
+        "mssqlManager.keybindings.executeCurrentStatement": {
+          "type": "string",
+          "default": "ctrl+enter",
+          "markdownDescription": "Keybindings for **Execute Current Statement** (runs the selection, or the statement at the cursor, separated by `;` or a `GO` line) inside the SQL editor. Same format as `#mssqlManager.keybindings.executeQuery#`. Leave empty to disable the shortcut. Applies when a SQL editor is opened."
+        },
         "mssqlManager.showTableStatistics": {
           "type": "boolean",
           "default": true,

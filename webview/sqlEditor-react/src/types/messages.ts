@@ -15,6 +15,8 @@ export interface ConfigMessage {
     cteHighlightColor?: string;
     jsonXmlHighlightColor?: string;
     multipleResultSetsDisplay?: 'single-view' | 'separately';
+    executeQueryKeybindings?: string;
+    executeCurrentStatementKeybindings?: string;
   };
 }
 
@@ -439,6 +441,10 @@ export interface EditorConfig {
   jsonXmlHighlightColor: string;
   /** How multiple result sets are displayed: stacked or as separate tabs. */
   multipleResultSetsDisplay: 'single-view' | 'separately';
+  /** Comma-separated keybindings for Execute Query, e.g. 'f5, ctrl+shift+e'. */
+  executeQueryKeybindings: string;
+  /** Comma-separated keybindings for Execute Current Statement, e.g. 'ctrl+enter'. */
+  executeCurrentStatementKeybindings: string;
 }
 
 export const defaultEditorConfig: EditorConfig = {
@@ -448,4 +454,6 @@ export const defaultEditorConfig: EditorConfig = {
   cteHighlightColor: '#6adc7a',
   jsonXmlHighlightColor: '#2563eb',
   multipleResultSetsDisplay: 'single-view',
+  executeQueryKeybindings: 'f5, ctrl+shift+e',
+  executeCurrentStatementKeybindings: 'ctrl+enter',
 };
