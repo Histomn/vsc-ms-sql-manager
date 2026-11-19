@@ -162,6 +162,8 @@ export class ConnectionWebview {
                 cfg.encrypt = config.encrypt !== false;
                 cfg.trustServerCertificate = config.trustServerCertificate !== false;
             }
+            cfg.applicationName = config.applicationName || undefined;
+            cfg.workstationId = config.workstationId || undefined;
             cfg.authType = config.authType;
             cfg.username = config.username;
             cfg.password = config.password;
@@ -207,6 +209,8 @@ export class ConnectionWebview {
                 port: config.port ? parseInt(config.port) : undefined,
                 encrypt: config.encrypt !== false,
                 trustServerCertificate: config.trustServerCertificate !== false,
+                applicationName: config.applicationName || undefined,
+                workstationId: config.workstationId || undefined,
                 connectionString: config.useConnectionString ? config.connectionString : undefined,
                 useConnectionString: config.useConnectionString || false,
                 serverGroupId: config.serverGroupId,
@@ -836,6 +840,22 @@ export class ConnectionWebview {
                 </div>
             </div>
 
+            <div class="advanced-section">
+                <div class="section-header">Client Identification (SQL Authentication)</div>
+
+                <div class="form-group">
+                    <label for="applicationName">Application Name</label>
+                    <input type="text" id="applicationName" placeholder="Leave empty to use default">
+                    <div class="help-text">Shown as program_name / APP_NAME() on the server</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="workstationId">Workstation ID</label>
+                    <input type="text" id="workstationId" placeholder="Leave empty to use default">
+                    <div class="help-text">Shown as host_name / HOST_NAME() on the server</div>
+                </div>
+            </div>
+
             <div class="message hidden" id="message"></div>
 
             <div class="color-picker-section">
@@ -1278,6 +1298,8 @@ export class ConnectionWebview {
                 password: document.getElementById('password').value || null,
                 encrypt: document.getElementById('encrypt').checked,
                 trustServerCertificate: document.getElementById('trustServerCertificate').checked,
+                applicationName: document.getElementById('applicationName').value.trim() || null,
+                workstationId: document.getElementById('workstationId').value.trim() || null,
                 color: enableConnectionColor.checked ? connectionColorInput.value : null
             };
             
@@ -1313,6 +1335,8 @@ export class ConnectionWebview {
                     document.getElementById('encrypt').checked = config.encrypt !== false;
                     document.getElementById('trustServerCertificate').checked = config.trustServerCertificate !== false;
                 }
+                document.getElementById('applicationName').value = config.applicationName || '';
+                document.getElementById('workstationId').value = config.workstationId || '';
                 
                 // Trigger events to update UI
                 useConnectionStringCheckbox.dispatchEvent(new Event('change'));

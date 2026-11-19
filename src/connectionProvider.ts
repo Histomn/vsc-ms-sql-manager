@@ -55,6 +55,8 @@ export interface ConnectionConfig {
     port?: number;
     encrypt?: boolean;
     trustServerCertificate?: boolean;
+    applicationName?: string; // Optional client application name sent to SQL Server (SQL auth)
+    workstationId?: string; // Optional workstation ID / host name sent to SQL Server (SQL auth)
     connectionString?: string;
     useConnectionString?: boolean;
     serverGroupId?: string; // New field for server group
@@ -493,7 +495,7 @@ export class ConnectionProvider {
                 let newConnection: DBPool | null = null;
                 try {
                     this.outputChannel.appendLine(`[ConnectionProvider] Creating pool for config...`);
-                    newConnection = await createPoolForConfig({ ...sqlConfig, authType: config.authType, useConnectionString: config.useConnectionString, connectionString: config.connectionString, username: config.username, password: config.password, port: config.port, encrypt: config.encrypt, trustServerCertificate: config.trustServerCertificate, azureAuthMethod: config.azureAuthMethod, tenantId: config.tenantId, queryTimeout });
+                    newConnection = await createPoolForConfig({ ...sqlConfig, authType: config.authType, useConnectionString: config.useConnectionString, connectionString: config.connectionString, username: config.username, password: config.password, port: config.port, encrypt: config.encrypt, trustServerCertificate: config.trustServerCertificate, applicationName: config.applicationName, workstationId: config.workstationId, azureAuthMethod: config.azureAuthMethod, tenantId: config.tenantId, queryTimeout });
                     
                     this.outputChannel.appendLine(`[ConnectionProvider] Pool created, attempting to connect...`);
                     await newConnection.connect();
@@ -615,6 +617,8 @@ export class ConnectionProvider {
                 port: baseConfig.port,
                 encrypt: baseConfig.encrypt,
                 trustServerCertificate: baseConfig.trustServerCertificate,
+                applicationName: baseConfig.applicationName,
+                workstationId: baseConfig.workstationId,
                 azureAuthMethod: baseConfig.azureAuthMethod,
                 tenantId: baseConfig.tenantId
             };
