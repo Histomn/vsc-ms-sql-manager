@@ -107,6 +107,7 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                     const multipleResultSetsDisplay = config.get<string>('multipleResultSetsDisplay', 'single-view');
                     const executeQueryKeybindings = config.get<string>('keybindings.executeQuery', 'f5, ctrl+shift+e');
                     const executeCurrentStatementKeybindings = config.get<string>('keybindings.executeCurrentStatement', 'ctrl+enter');
+                    const autoAliasTables = config.get<boolean>('autoAliasTables', true);
                     webviewPanel.webview.postMessage({
                         type: 'config',
                         config: {
@@ -117,7 +118,8 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                             jsonXmlHighlightColor,
                             multipleResultSetsDisplay,
                             executeQueryKeybindings,
-                            executeCurrentStatementKeybindings
+                            executeCurrentStatementKeybindings,
+                            autoAliasTables
                         }
                     });
 
@@ -2521,9 +2523,10 @@ COMMIT TRANSACTION;
                         const multipleResultSetsDisplay = config.get<string>('multipleResultSetsDisplay', 'single-view');
                         const executeQueryKeybindings = config.get<string>('keybindings.executeQuery', 'f5, ctrl+shift+e');
                         const executeCurrentStatementKeybindings = config.get<string>('keybindings.executeCurrentStatement', 'ctrl+enter');
+                        const autoAliasTables = config.get<boolean>('autoAliasTables', true);
                         panel.webview.postMessage({
                             type: 'config',
-                            config: { colorPrimaryForeignKeys, numberFormat, variableHighlightColor, cteHighlightColor, jsonXmlHighlightColor, multipleResultSetsDisplay, executeQueryKeybindings, executeCurrentStatementKeybindings }
+                            config: { colorPrimaryForeignKeys, numberFormat, variableHighlightColor, cteHighlightColor, jsonXmlHighlightColor, multipleResultSetsDisplay, executeQueryKeybindings, executeCurrentStatementKeybindings, autoAliasTables }
                         });
                     }
 

@@ -10,3 +10,4 @@ export * from './crossDatabaseCompletion';
 export * from './crossDatabaseResolver';
 export * from './objectAtCursor';
 export * from './joinKeySuggestions';
+export * from './autoAlias';

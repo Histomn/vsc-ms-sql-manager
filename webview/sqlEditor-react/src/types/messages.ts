@@ -17,6 +17,7 @@ export interface ConfigMessage {
     multipleResultSetsDisplay?: 'single-view' | 'separately';
     executeQueryKeybindings?: string;
     executeCurrentStatementKeybindings?: string;
+    autoAliasTables?: boolean;
   };
 }
 
@@ -485,6 +486,8 @@ export interface EditorConfig {
   executeQueryKeybindings: string;
   /** Comma-separated keybindings for Execute Current Statement, e.g. 'ctrl+enter'. */
   executeCurrentStatementKeybindings: string;
+  /** Insert `Table alias` when picking a table after FROM / JOIN. */
+  autoAliasTables: boolean;
 }
 
 export const defaultEditorConfig: EditorConfig = {
@@ -496,4 +499,5 @@ export const defaultEditorConfig: EditorConfig = {
   multipleResultSetsDisplay: 'single-view',
   executeQueryKeybindings: 'f5, ctrl+shift+e',
   executeCurrentStatementKeybindings: 'ctrl+enter',
+  autoAliasTables: true,
 };

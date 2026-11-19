@@ -23,6 +23,10 @@ import {
   formatProcedureParameters,
   prepareCrossDatabaseQuery,
   getJoinKeySuggestions,
+  createUniqueAlias,
+  isDeleteFromContext,
+  isTableReferencePosition,
+  hasTextAfterCursor,
   type CrossDatabaseContext,
   type SqlContextType,
 } from '../../../services';
@@ -30,6 +34,11 @@ import {
 type MonacoType = typeof import('monaco-editor');
 
 export type { CrossDatabaseContext };
+
+export interface CompletionOptions {
+  /** Insert an alias after table names chosen in FROM / JOIN (default true). */
+  autoAlias?: boolean;
+}
 
 /**
  * Registers the T-SQL completion item provider (autocomplete) with Monaco.
@@ -39,8 +48,11 @@ export function useCompletionProvider(
   monacoRef: MutableRefObject<MonacoType | null>,
   dbSchema: DatabaseSchema | undefined,
   editorReady: boolean,
-  crossDb?: CrossDatabaseContext
+  crossDb?: CrossDatabaseContext,
+  options?: CompletionOptions
 ): void {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   // Read through a ref so database list changes don't re-register the provider
   const crossDbRef = useRef(crossDb);
   crossDbRef.current = crossDb;
@@ -89,6 +101,24 @@ export function useCompletionProvider(
         // Build augmented schema with CTE definitions as virtual tables
         const augmentedSchema = buildAugmentedSchema(prepared.schema, analysisText);
 
+        // ---- Automatic table alias (FROM / JOIN table suggestions insert `Table alias`) ----
+        const restOfLine = analysisText.slice(textUntilPosition.length).split(/\r?\n/)[0] ?? '';
+        const aliasAllowed =
+          optionsRef.current?.autoAlias !== false &&
+          !isDeleteFromContext(analysisTextUntilPosition) &&
+          !hasTextAfterCursor(restOfLine);
+        let usedAliases: Set<string> | null = null;
+        const withAlias = (name: string, tableName: string): string => {
+          if (!aliasAllowed) return name;
+          if (!usedAliases) {
+            usedAliases = new Set(
+              extractTablesFromQuery(analysisText, augmentedSchema).map((t) => (t.alias || t.table).toLowerCase())
+            );
+          }
+          return `${name} ${createUniqueAlias(tableName, usedAliases)}`;
+        };
+        const aliasAfterQualified = aliasAllowed && isTableReferencePosition(analysisTextUntilPosition);
+
         // ---- Cross-database / EXEC completion helpers ----
         const databases = cross?.databases ?? [];
         const qualified = parseQualifiedPrefix(lineUntilPosition);
@@ -131,7 +161,7 @@ export function useCompletionProvider(
             items.push({
               label: qualifiedInsert ? t.name : text,
               kind: monacoInstance.languages.CompletionItemKind.Class,
-              insertText: text,
+              insertText: qualifiedInsert && aliasAfterQualified ? withAlias(text, t.name) : text,
               range,
               detail: `Table (${t.columns.length} columns)`,
               sortText: `1_${t.schema}_${t.name}`,
@@ -142,7 +172,7 @@ export function useCompletionProvider(
             items.push({
               label: qualifiedInsert ? v.name : text,
               kind: monacoInstance.languages.CompletionItemKind.Interface,
-              insertText: text,
+              insertText: qualifiedInsert && aliasAfterQualified ? withAlias(text, v.name) : text,
               range,
               detail: 'View',
               sortText: `2_${v.schema}_${v.name}`,
@@ -309,7 +339,7 @@ export function useCompletionProvider(
               suggestions.push({
                 label: displayName,
                 kind: monacoInstance.languages.CompletionItemKind.Class,
-                insertText: displayName,
+                insertText: withAlias(displayName, table.name),
                 range,
                 detail: `Table (${table.columns.length} columns)`,
                 sortText: `1_${table.schema ?? ''}_${table.name}`,
@@ -321,7 +351,7 @@ export function useCompletionProvider(
               suggestions.push({
                 label: displayName,
                 kind: monacoInstance.languages.CompletionItemKind.Interface,
-                insertText: displayName,
+                insertText: withAlias(displayName, view.name),
                 range,
                 detail: 'View',
                 sortText: `2_${view.schema ?? ''}_${view.name}`,

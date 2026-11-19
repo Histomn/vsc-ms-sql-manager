@@ -240,7 +240,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     useObjectDefinitionPeek(monacoRef, editorRef, editorReady, {
       dbSchema, crossDb, currentDatabase: currentDatabase ?? null, requestDefinition: requestObjectDefinition,
     });
-    useCompletionProvider(monacoRef, dbSchema, editorReady, crossDb);
+    useCompletionProvider(monacoRef, dbSchema, editorReady, crossDb, { autoAlias: config.autoAliasTables });
     useHostSnippetCompletions(monacoRef, editorReady, postMessage);
     useAiInlineCompletions(monacoRef, dbSchemaRef, editorReady, postMessage);
     useSchemaProviders(monacoRef, editorRef, dbSchema, editorReady, currentConnectionId, crossDb);

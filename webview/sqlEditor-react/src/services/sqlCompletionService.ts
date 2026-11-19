@@ -521,7 +521,8 @@ export function generateSmartAlias(tableName: string): string {
     const parts = name.split('_');
     const initials: string[] = [];
     for (const part of parts) {
-      const subWords = part.split(/(?=[A-Z])/).filter(Boolean);
+      // Only split PascalCase words; ALL_CAPS parts (e.g. AGRMNT) are a single word
+      const subWords = (/[a-z]/.test(part) ? part.split(/(?=[A-Z])/) : [part]).filter(Boolean);
       if (subWords.length > 1) {
         initials.push(...subWords.map(w => w[0]?.toLowerCase() || ''));
       } else {
@@ -532,7 +533,7 @@ export function generateSmartAlias(tableName: string): string {
   }
   
   // If name is PascalCase, use first letter of each word
-  const words = name.split(/(?=[A-Z])/);
+  const words = /[a-z]/.test(name) ? name.split(/(?=[A-Z])/) : [name];
   if (words.length > 1) {
     return words.map((w) => w[0]?.toLowerCase() || '').join('');
   }

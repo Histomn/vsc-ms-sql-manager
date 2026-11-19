@@ -20,7 +20,7 @@ const otherSchema: DatabaseSchema = {
   storedProcedures: [{ schema: 'dbo', name: 'usp_other' }],
 };
 
-function setup(crossDb: CrossDatabaseContext) {
+function setup(crossDb: CrossDatabaseContext, options?: { autoAlias?: boolean }) {
   const registerCompletionItemProvider = vi.fn(() => ({ dispose: vi.fn() }));
   const kinds = new Proxy({}, { get: (_t, p) => String(p) });
   const monaco = {
@@ -30,7 +30,7 @@ function setup(crossDb: CrossDatabaseContext) {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
     },
   };
-  renderHook(() => useCompletionProvider({ current: monaco } as any, currentSchema, true, crossDb));
+  renderHook(() => useCompletionProvider({ current: monaco } as any, currentSchema, true, crossDb, options));
   const provider = (registerCompletionItemProvider.mock.calls as any[])[0][1];
 
   return async (sql: string) => {
@@ -58,6 +58,37 @@ const makeCross = () => {
 };
 
 describe('useCompletionProvider cross-database completion', () => {
+  it('inserts an automatic alias after the table name in FROM', async () => {
+    const { crossDb } = makeCross();
+    const run = setup(crossDb);
+    const items = await run('SELECT * FROM ');
+    expect(items.find((i) => i.label === 'Users')?.insertText).toBe('Users u');
+    expect(items.find((i) => i.label === 'vUsers')?.insertText).toBe('vUsers vu');
+  });
+
+  it('inserts an alias for tables chosen after `db.schema.`', async () => {
+    const { crossDb } = makeCross();
+    const run = setup(crossDb);
+    const items = await run('SELECT * FROM AR.dbo.');
+    expect(items.map((i) => i.insertText)).toEqual(['Customers c']);
+  });
+
+  it('keeps the alias unique within the query', async () => {
+    const { crossDb } = makeCross();
+    const run = setup(crossDb);
+    const items = await run('SELECT * FROM Users u;\nSELECT * FROM ');
+    expect(items.find((i) => i.label === 'Users')?.insertText).toBe('Users u2');
+  });
+
+  it('does not add an alias for DELETE FROM, when disabled, or when one already follows', async () => {
+    const { crossDb } = makeCross();
+    const run = setup(crossDb);
+    expect((await run('DELETE FROM ')).find((i) => i.label === 'Users')?.insertText).toBe('Users');
+
+    const off = setup(crossDb, { autoAlias: false });
+    expect((await off('SELECT * FROM ')).find((i) => i.label === 'Users')?.insertText).toBe('Users');
+  });
+
   it('suggests database names after FROM', async () => {
     const { crossDb } = makeCross();
     const run = setup(crossDb);

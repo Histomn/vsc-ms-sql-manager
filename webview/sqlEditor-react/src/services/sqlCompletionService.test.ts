@@ -1587,6 +1587,12 @@ CROSS APPLY (SELECT TOP 1 Total FROM Orders o WHERE o.UserId = u.Id ORDER BY o.O
       expect(generateSmartAlias('fn_GetData')).toBe('gd');
     });
 
+    it('should use initials of the underscore-separated words for ALL_CAPS names', () => {
+      expect(generateSmartAlias('AGRMNT_ACC_MNT')).toBe('aam');
+      expect(generateSmartAlias('AMRTZ_INST_SCHDL')).toBe('ais');
+      expect(generateSmartAlias('USERS')).toBe('u');
+    });
+
     it('should handle all-uppercase names', () => {
       const alias = generateSmartAlias('ORDERITEMS');
       // May return "o" (first letter) - important that it is a string and does not crash

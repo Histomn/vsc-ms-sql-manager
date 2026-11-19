@@ -1452,6 +1452,11 @@
           "default": "",
           "description": "Workstation ID sent to SQL Server (visible as host_name / HOST_NAME()). Leave empty to use the driver default. Applies to new connections (SQL authentication)."
         },
+        "mssqlManager.autoAliasTables": {
+          "type": "boolean",
+          "default": true,
+          "description": "When you pick a table or view after FROM or JOIN in the SQL editor, also insert an alias built from the name's initials (for example AGRMNT_ACC_MNT aam)."
+        },
         "mssqlManager.keybindings.executeQuery": {
           "type": "string",
           "default": "f5, ctrl+shift+e",
