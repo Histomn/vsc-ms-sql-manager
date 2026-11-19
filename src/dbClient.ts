@@ -507,6 +507,15 @@ export async function createPoolForConfig(cfg: any): Promise<DBPool> {
             trustServerCertificate: cfg.trustServerCertificate !== false,
             enableArithAbort: true // Required for some SQL Server versions
         };
+        const clientCfg = vscode.workspace.getConfiguration('mssqlManager');
+        const appName = (clientCfg.get<string>('applicationName') || '').trim();
+        const workstationId = (clientCfg.get<string>('workstationId') || '').trim();
+        if (appName) {
+            mssqlConfig.options.appName = appName;
+        }
+        if (workstationId) {
+            mssqlConfig.options.workstationId = workstationId;
+        }
         if (cfg.port) {
             mssqlConfig.port = cfg.port;
         }

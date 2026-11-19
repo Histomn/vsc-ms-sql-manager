@@ -1,9 +1,9 @@
 {
-  "name": "ms-sql-manager",
+  "name": "ms-sql-manager-custom",
   "displayName": "MS SQL Manager",
   "description": "Manage Microsoft SQL Server databases with connection management, schema browsing, and query execution.",
   "version": "0.21.0",
-  "publisher": "jakubkozera",
+  "publisher": "histomn",
   "icon": "ms-sql-manager.png",
   "sponsor": {
     "url": "https://github.com/sponsors/jakubkozera"
@@ -1442,6 +1442,16 @@
     "configuration": {
       "title": "MS SQL Manager",
       "properties": {
+        "mssqlManager.applicationName": {
+          "type": "string",
+          "default": "",
+          "description": "Application name sent to SQL Server (visible as program_name / APP_NAME()). Leave empty to use the driver default. Applies to new connections (SQL authentication)."
+        },
+        "mssqlManager.workstationId": {
+          "type": "string",
+          "default": "",
+          "description": "Workstation ID sent to SQL Server (visible as host_name / HOST_NAME()). Leave empty to use the driver default. Applies to new connections (SQL authentication)."
+        },
         "mssqlManager.showTableStatistics": {
           "type": "boolean",
           "default": true,
