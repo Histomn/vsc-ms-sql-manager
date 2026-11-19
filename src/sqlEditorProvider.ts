@@ -261,6 +261,11 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                     await this.sendSchemaUpdate(webviewPanel.webview, message.connectionId);
                     break;
 
+                case 'requestObjectDefinition':
+                    // Definition (script) of a table, view or stored procedure for the peek widget
+                    await this.sendObjectDefinition(webviewPanel.webview, message.connectionId, message.database, message.schema, message.name, message.requestId);
+                    break;
+
                 case 'requestDatabaseSchema':
                     // Lazy-load the schema of another database (cross-database autocomplete)
                     await this.sendDatabaseSchema(webviewPanel.webview, message.connectionId, message.database, message.requestId);
@@ -1532,6 +1537,206 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
             reply({ error: error instanceof Error ? error.message : String(error) });
         }
     }
+    /**
+     * Send the definition of a table, view, stored procedure, function or trigger
+     * to the webview (used by "Peek Definition"). Tables are scripted as CREATE TABLE
+     * including primary key, foreign keys and indexes.
+     */
+    private async sendObjectDefinition(
+        webview: vscode.Webview,
+        connectionId: string | undefined,
+        database: string | undefined,
+        schema: string,
+        name: string,
+        requestId: string
+    ) {
+        if (this.disposedWebviews.has(webview)) {
+            return;
+        }
+        const reply = (payload: { definition?: string; error?: string }) => {
+            if (!this.disposedWebviews.has(webview)) {
+                webview.postMessage({ type: 'objectDefinition', requestId, ...payload });
+            }
+        };
+
+        try {
+            if (!schema || !name) {
+                reply({ error: 'No object specified' });
+                return;
+            }
+            let baseId = connectionId && typeof connectionId === 'string' ? connectionId.split('::')[0] : undefined;
+            let dbName = database || (connectionId && connectionId.includes('::') ? connectionId.split('::')[1] : undefined);
+            if (!baseId) {
+                baseId = this.connectionProvider.getCurrentConfig()?.id;
+            }
+            const config = baseId ? this.connectionProvider.getConnectionConfig(baseId) : null;
+            if (!config) {
+                reply({ error: 'No active connection' });
+                return;
+            }
+            const pool = dbName
+                ? await this.connectionProvider.createDbPool(config.id, dbName)
+                : (this.connectionProvider.getConnection(config.id) || this.connectionProvider.getConnection());
+            if (!pool) {
+                reply({ error: 'No active connection' });
+                return;
+            }
+
+            const lit = (value: string) => value.replace(/'/g, "''");
+            const lookup = await pool.request().query(`
+                SELECT o.object_id AS objectId, o.type AS objectType, OBJECT_DEFINITION(o.object_id) AS definition
+                FROM sys.objects o
+                INNER JOIN sys.schemas s ON s.schema_id = o.schema_id
+                WHERE s.name = '${lit(schema)}' AND o.name = '${lit(name)}'
+            `);
+            const row = lookup.recordset?.[0];
+            if (!row) {
+                reply({ error: `Object [${schema}].[${name}] was not found${dbName ? ` in ${dbName}` : ''}` });
+                return;
+            }
+
+            const objectType = String(row.objectType).trim();
+            if (objectType === 'U') {
+                reply({ definition: await this.scriptTable(pool, row.objectId, schema, name, dbName) });
+                return;
+            }
+            if (row.definition) {
+                reply({ definition: `${dbName ? `-- Database: ${dbName}\n` : ''}${row.definition}` });
+            } else {
+                reply({ error: 'The definition is not available (the object may be encrypted or you may lack permission).' });
+            }
+        } catch (error) {
+            this.outputChannel.appendLine(`[SqlEditorProvider] Failed to load definition of ${schema}.${name}: ${error}`);
+            reply({ error: error instanceof Error ? error.message : String(error) });
+        }
+    }
+
+    /** Build a CREATE TABLE script (columns, primary key, unique constraints, foreign keys, indexes). */
+    private async scriptTable(pool: any, objectId: number, schema: string, name: string, database?: string): Promise<string> {
+        const id = Number(objectId);
+        const columns = (await pool.request().query(`
+            SELECT c.name, ty.name AS typeName, c.max_length AS maxLength, c.precision, c.scale,
+                   c.is_nullable AS isNullable, c.is_identity AS isIdentity, c.is_computed AS isComputed,
+                   cc.definition AS computedDefinition, dc.definition AS defaultDefinition,
+                   ic.seed_value AS seedValue, ic.increment_value AS incrementValue
+            FROM sys.columns c
+            INNER JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+            LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
+            LEFT JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
+            LEFT JOIN sys.identity_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+            WHERE c.object_id = ${id}
+            ORDER BY c.column_id
+        `)).recordset || [];
+
+        const indexRows = (await pool.request().query(`
+            SELECT i.index_id AS indexId, i.name, i.type_desc AS typeDesc, i.is_primary_key AS isPrimaryKey,
+                   i.is_unique AS isUnique, i.is_unique_constraint AS isUniqueConstraint,
+                   c.name AS columnName, ic.is_descending_key AS isDescending, ic.is_included_column AS isIncluded
+            FROM sys.indexes i
+            INNER JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+            INNER JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+            WHERE i.object_id = ${id} AND i.type > 0
+            ORDER BY i.index_id, ic.is_included_column, ic.key_ordinal, ic.index_column_id
+        `)).recordset || [];
+
+        const fkRows = (await pool.request().query(`
+            SELECT fk.name, fk.delete_referential_action AS deleteAction, fk.update_referential_action AS updateAction,
+                   SCHEMA_NAME(rt.schema_id) AS refSchema, rt.name AS refTable,
+                   pc.name AS parentColumn, rc.name AS refColumn
+            FROM sys.foreign_keys fk
+            INNER JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+            INNER JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+            INNER JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
+            INNER JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+            WHERE fk.parent_object_id = ${id}
+            ORDER BY fk.name, fkc.constraint_column_id
+        `)).recordset || [];
+
+        const formatType = (col: any): string => {
+            const t = String(col.typeName).toLowerCase();
+            if (['varchar', 'char', 'varbinary', 'binary'].includes(t)) {
+                return `${t}(${col.maxLength === -1 ? 'MAX' : col.maxLength})`;
+            }
+            if (['nvarchar', 'nchar'].includes(t)) {
+                return `${t}(${col.maxLength === -1 ? 'MAX' : col.maxLength / 2})`;
+            }
+            if (t === 'decimal' || t === 'numeric') {
+                return `${t}(${col.precision}, ${col.scale})`;
+            }
+            if (['datetime2', 'datetimeoffset', 'time'].includes(t)) {
+                return `${t}(${col.scale})`;
+            }
+            return t;
+        };
+
+        const lines: string[] = columns.map((col: any) => {
+            if (col.isComputed) {
+                return `    [${col.name}] AS ${col.computedDefinition}`;
+            }
+            let def = `    [${col.name}] ${formatType(col)}`;
+            if (col.isIdentity) {
+                def += ` IDENTITY(${col.seedValue ?? 1}, ${col.incrementValue ?? 1})`;
+            }
+            def += col.isNullable ? ' NULL' : ' NOT NULL';
+            if (col.defaultDefinition) {
+                def += ` DEFAULT ${col.defaultDefinition}`;
+            }
+            return def;
+        });
+
+        // Group index rows by index
+        const indexes = new Map<number, { name: string; typeDesc: string; isPrimaryKey: boolean; isUnique: boolean; isUniqueConstraint: boolean; keys: string[]; included: string[] }>();
+        for (const r of indexRows) {
+            let idx = indexes.get(r.indexId);
+            if (!idx) {
+                idx = { name: r.name, typeDesc: r.typeDesc, isPrimaryKey: !!r.isPrimaryKey, isUnique: !!r.isUnique, isUniqueConstraint: !!r.isUniqueConstraint, keys: [], included: [] };
+                indexes.set(r.indexId, idx);
+            }
+            if (r.isIncluded) {
+                idx.included.push(`[${r.columnName}]`);
+            } else {
+                idx.keys.push(`[${r.columnName}]${r.isDescending ? ' DESC' : ''}`);
+            }
+        }
+
+        const clustered = (typeDesc: string) => (String(typeDesc).startsWith('CLUSTERED') ? 'CLUSTERED' : 'NONCLUSTERED');
+        const trailingIndexes: string[] = [];
+        for (const idx of indexes.values()) {
+            if (idx.isPrimaryKey) {
+                lines.push(`    CONSTRAINT [${idx.name}] PRIMARY KEY ${clustered(idx.typeDesc)} (${idx.keys.join(', ')})`);
+            } else if (idx.isUniqueConstraint) {
+                lines.push(`    CONSTRAINT [${idx.name}] UNIQUE ${clustered(idx.typeDesc)} (${idx.keys.join(', ')})`);
+            } else {
+                const include = idx.included.length > 0 ? `\n    INCLUDE (${idx.included.join(', ')})` : '';
+                trailingIndexes.push(
+                    `CREATE ${idx.isUnique ? 'UNIQUE ' : ''}${clustered(idx.typeDesc)} INDEX [${idx.name}]\n    ON [${schema}].[${name}] (${idx.keys.join(', ')})${include};`
+                );
+            }
+        }
+
+        const fks = new Map<string, any[]>();
+        for (const r of fkRows) {
+            const list = fks.get(r.name) ?? [];
+            list.push(r);
+            fks.set(r.name, list);
+        }
+        const actions = ['', ' ON DELETE CASCADE', ' ON DELETE SET NULL', ' ON DELETE SET DEFAULT'];
+        const updateActions = ['', ' ON UPDATE CASCADE', ' ON UPDATE SET NULL', ' ON UPDATE SET DEFAULT'];
+        for (const [fkName, parts] of fks) {
+            const cols = parts.map((p) => `[${p.parentColumn}]`).join(', ');
+            const refCols = parts.map((p) => `[${p.refColumn}]`).join(', ');
+            lines.push(
+                `    CONSTRAINT [${fkName}] FOREIGN KEY (${cols}) REFERENCES [${parts[0].refSchema}].[${parts[0].refTable}] (${refCols})` +
+                `${actions[parts[0].deleteAction] ?? ''}${updateActions[parts[0].updateAction] ?? ''}`
+            );
+        }
+
+        let script = `${database ? `-- Database: ${database}\n` : ''}CREATE TABLE [${schema}].[${name}] (\n${lines.join(',\n')}\n);`;
+        if (trailingIndexes.length > 0) {
+            script += `\n\n${trailingIndexes.join('\n\n')}`;
+        }
+        return script;
+    }
     private async executeQuery(query: string, connectionId: string | null, webview: vscode.Webview, includeActualPlan: boolean = false) {
         if (!query || query.trim().length === 0) {
             webview.postMessage({
@@ -2463,6 +2668,10 @@ COMMIT TRANSACTION;
                         this.webviewSelectedConnection.set(panel.webview, message.connectionId);
                     }
                     await this.sendSchemaUpdate(panel.webview, message.connectionId);
+                    break;
+
+                case 'requestObjectDefinition':
+                    await this.sendObjectDefinition(panel.webview, message.connectionId, message.database, message.schema, message.name, message.requestId);
                     break;
 
                 case 'requestDatabaseSchema':

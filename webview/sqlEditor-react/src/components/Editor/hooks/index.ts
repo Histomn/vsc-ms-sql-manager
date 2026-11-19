@@ -4,6 +4,7 @@ export { useEditorActions, findTableAtCursorPosition } from './useEditorActions'
 export type { EditorActionsDeps } from './useEditorActions';
 export { useExecuteActions } from './useExecuteActions';
 export { useCrossDatabasePrefetch } from './useCrossDatabasePrefetch';
+export { useObjectDefinitionPeek } from './useObjectDefinitionPeek';
 export { useEditorSetup } from './useEditorSetup';
 export { useSchemaProviders } from './useSchemaProviders';
 export { useCteHighlight } from './useCteHighlight';

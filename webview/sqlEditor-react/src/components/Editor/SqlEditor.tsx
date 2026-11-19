@@ -4,7 +4,7 @@ import type { editor } from 'monaco-editor';
 import { format } from 'sql-formatter';
 import { useVSCode } from '../../context/VSCodeContext';
 import { useFormatOptions } from '../Toolbar/FormatButton';
-import { useEditorSetup, useEditorActions, useExecuteActions, useCrossDatabasePrefetch, useCompletionProvider, useSchemaProviders, useWildcardExpansion, useVariableHighlight, useCteHighlight, useAiInlineCompletions, useHostSnippetCompletions } from './hooks';
+import { useEditorSetup, useEditorActions, useExecuteActions, useCrossDatabasePrefetch, useObjectDefinitionPeek, useCompletionProvider, useSchemaProviders, useWildcardExpansion, useVariableHighlight, useCteHighlight, useAiInlineCompletions, useHostSnippetCompletions } from './hooks';
 import './SqlEditor.css';
 
 export interface SqlEditorHandle {
@@ -201,7 +201,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const [editorReady, setEditorReady] = useState(false);
     const lastContextPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
     const tableAtCursorContextKeyRef = useRef<any>(null);
-    const { dbSchema, requestPaste, pasteContent, clearPasteContent, postMessage, currentConnectionId, currentDatabase, config, databases, requestDatabaseSchema, getLoadedDatabaseSchema, externalSchemaVersion } = useVSCode();
+    const { dbSchema, requestPaste, pasteContent, clearPasteContent, postMessage, currentConnectionId, currentDatabase, config, databases, requestDatabaseSchema, getLoadedDatabaseSchema, externalSchemaVersion, requestObjectDefinition } = useVSCode();
     const dbSchemaRef = useRef(dbSchema);
     const currentConnectionIdRef = useRef(currentConnectionId);
     const currentDatabaseRef = useRef(currentDatabase);
@@ -237,6 +237,9 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     );
 
     useCrossDatabasePrefetch(editorRef, editorReady, crossDb);
+    useObjectDefinitionPeek(monacoRef, editorRef, editorReady, {
+      dbSchema, crossDb, currentDatabase: currentDatabase ?? null, requestDefinition: requestObjectDefinition,
+    });
     useCompletionProvider(monacoRef, dbSchema, editorReady, crossDb);
     useHostSnippetCompletions(monacoRef, editorReady, postMessage);
     useAiInlineCompletions(monacoRef, dbSchemaRef, editorReady, postMessage);

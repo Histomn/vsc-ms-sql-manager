@@ -8,3 +8,4 @@ export * from './sqlWildcardService';
 export * from './aiCompletionContext';
 export * from './crossDatabaseCompletion';
 export * from './crossDatabaseResolver';
+export * from './objectAtCursor';

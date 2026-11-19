@@ -306,6 +306,8 @@ interface VSCodeContextValue extends VSCodeState {
   
   // Cross-database autocomplete: lazily loads (and caches) another database's schema
   requestDatabaseSchema: (database: string) => Promise<DatabaseSchema | null>;
+  /** Fetches the script (CREATE ...) of a table, view or stored procedure. Resolves null on timeout. */
+  requestObjectDefinition: (target: { database?: string; schema: string; name: string }) => Promise<string | null>;
   /** Returns the already loaded schema of another database, if any. */
   getLoadedDatabaseSchema: (database: string) => DatabaseSchema | undefined;
   /** Increments each time another database's schema finishes loading. */
@@ -364,6 +366,31 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
   const externalPendingRef = useRef(new Map<string, { key: string; resolve: (s: DatabaseSchema | null) => void; timer: ReturnType<typeof setTimeout> }>());
   const externalRequestCounterRef = useRef(0);
   const [externalSchemaVersion, setExternalSchemaVersion] = useState(0);
+
+  // Pending "peek definition" requests
+  const definitionPendingRef = useRef(new Map<string, { resolve: (text: string | null) => void; timer: ReturnType<typeof setTimeout> }>());
+  const definitionCounterRef = useRef(0);
+
+  const requestObjectDefinition = useCallback((target: { database?: string; schema: string; name: string }): Promise<string | null> => {
+    const connectionId = stateRef.current.currentConnectionId;
+    if (!connectionId) return Promise.resolve(null);
+    const requestId = `objdef-${++definitionCounterRef.current}`;
+    return new Promise<string | null>((resolve) => {
+      const timer = setTimeout(() => {
+        definitionPendingRef.current.delete(requestId);
+        resolve(null);
+      }, 20000);
+      definitionPendingRef.current.set(requestId, { resolve, timer });
+      postMessage({
+        type: 'requestObjectDefinition',
+        requestId,
+        connectionId,
+        database: target.database ?? stateRef.current.currentDatabase ?? undefined,
+        schema: target.schema,
+        name: target.name,
+      });
+    });
+  }, [postMessage]);
 
   const getLoadedDatabaseSchema = useCallback((database: string): DatabaseSchema | undefined => {
     const connectionId = stateRef.current.currentConnectionId;
@@ -445,6 +472,16 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
         case 'schemaUpdate':
           dispatch({ type: 'SET_SCHEMA', schema: message.schema });
           break;
+
+        case 'objectDefinition': {
+          const pending = definitionPendingRef.current.get(message.requestId);
+          if (pending) {
+            clearTimeout(pending.timer);
+            definitionPendingRef.current.delete(message.requestId);
+            pending.resolve(message.definition ?? `-- ${message.error ?? 'Definition not available'}`);
+          }
+          break;
+        }
 
         case 'databaseSchemaUpdate': {
           const pending = externalPendingRef.current.get(message.requestId);
@@ -703,6 +740,7 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     getExpansionResult,
     clearAutoExecute,
     requestDatabaseSchema,
+    requestObjectDefinition,
     getLoadedDatabaseSchema,
     externalSchemaVersion,
     requestPaste,
@@ -723,6 +761,7 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     getExpansionResult,
     clearAutoExecute,
     requestDatabaseSchema,
+    requestObjectDefinition,
     getLoadedDatabaseSchema,
     externalSchemaVersion,
     requestPaste,

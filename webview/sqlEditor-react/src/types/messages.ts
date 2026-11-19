@@ -52,6 +52,14 @@ export interface DatabaseSchemaUpdateMessage {
   error?: string;
 }
 
+/** Response to requestObjectDefinition: script of a table, view or stored procedure. */
+export interface ObjectDefinitionMessage {
+  type: 'objectDefinition';
+  requestId: string;
+  definition?: string;
+  error?: string;
+}
+
 export interface ExecutingMessage {
   type: 'executing';
 }
@@ -174,6 +182,7 @@ export type IncomingMessage =
   | DatabasesUpdateMessage
   | SchemaUpdateMessage
   | DatabaseSchemaUpdateMessage
+  | ObjectDefinitionMessage
   | ExecutingMessage
   | ResultsMessage
   | RelationResultsMessage
@@ -227,6 +236,15 @@ export interface SwitchDatabaseOutgoing {
   type: 'switchDatabase';
   connectionId: string;
   databaseName: string;
+}
+
+export interface RequestObjectDefinitionOutgoing {
+  type: 'requestObjectDefinition';
+  requestId: string;
+  connectionId: string;
+  database?: string;
+  schema: string;
+  name: string;
 }
 
 export interface RequestDatabaseSchemaOutgoing {
@@ -370,6 +388,7 @@ export type OutgoingMessage =
   | SelectConnectionOutgoing
   | SwitchDatabaseOutgoing
   | RequestDatabaseSchemaOutgoing
+  | RequestObjectDefinitionOutgoing
   | CommitChangesOutgoing
   | ExpandRelationOutgoing
   | OpenNewQueryOutgoing
