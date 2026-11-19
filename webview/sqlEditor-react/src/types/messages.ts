@@ -43,6 +43,15 @@ export interface SchemaUpdateMessage {
   schema: DatabaseSchema;
 }
 
+/** Response to requestDatabaseSchema: schema of another database on the same server. */
+export interface DatabaseSchemaUpdateMessage {
+  type: 'databaseSchemaUpdate';
+  requestId: string;
+  database: string;
+  schema?: DatabaseSchema;
+  error?: string;
+}
+
 export interface ExecutingMessage {
   type: 'executing';
 }
@@ -164,6 +173,7 @@ export type IncomingMessage =
   | ConnectionsUpdateMessage
   | DatabasesUpdateMessage
   | SchemaUpdateMessage
+  | DatabaseSchemaUpdateMessage
   | ExecutingMessage
   | ResultsMessage
   | RelationResultsMessage
@@ -217,6 +227,13 @@ export interface SwitchDatabaseOutgoing {
   type: 'switchDatabase';
   connectionId: string;
   databaseName: string;
+}
+
+export interface RequestDatabaseSchemaOutgoing {
+  type: 'requestDatabaseSchema';
+  requestId: string;
+  connectionId: string;
+  database: string;
 }
 
 export interface CommitChangesOutgoing {
@@ -352,6 +369,7 @@ export type OutgoingMessage =
   | ManageConnectionsOutgoing
   | SelectConnectionOutgoing
   | SwitchDatabaseOutgoing
+  | RequestDatabaseSchemaOutgoing
   | CommitChangesOutgoing
   | ExpandRelationOutgoing
   | OpenNewQueryOutgoing

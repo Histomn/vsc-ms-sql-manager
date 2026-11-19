@@ -21,6 +21,7 @@ import {
   buildColumnExpansion,
   findWildcardCandidatesInLine,
 } from '../../../services/sqlWildcardService';
+import { prepareCrossDatabaseQuery, type CrossDatabaseContext } from '../../../services/crossDatabaseResolver';
 
 type MonacoType = typeof import('monaco-editor');
 
@@ -33,6 +34,7 @@ type MonacoType = typeof import('monaco-editor');
 function tryExpand(
   ed: editor.IStandaloneCodeEditor,
   schema: DatabaseSchema,
+  cross: CrossDatabaseContext | undefined,
   position?: { lineNumber: number; column: number }
 ): boolean {
   const model = ed.getModel();
@@ -44,7 +46,8 @@ function tryExpand(
   const wildcardInfo = findWildcardAtPosition(model, pos);
   if (!wildcardInfo) return false;
 
-  const resolution = resolveWildcard(model.getValue(), wildcardInfo, schema);
+  const prepared = prepareCrossDatabaseQuery(model.getValue(), schema, cross);
+  const resolution = resolveWildcard(prepared.sql, wildcardInfo, prepared.schema);
   if (!resolution || resolution.totalColumns === 0) return false;
 
   const expanded = buildColumnExpansion(
@@ -69,8 +72,13 @@ export function useWildcardExpansion(
   monacoRef: MutableRefObject<MonacoType | null>,
   editorRef: MutableRefObject<editor.IStandaloneCodeEditor | null>,
   dbSchema: DatabaseSchema | undefined,
-  editorReady: boolean
+  editorReady: boolean,
+  crossDb?: CrossDatabaseContext
 ): void {
+  // Same idea for the cross-database context (other databases' schemas load lazily)
+  const crossDbRef = useRef(crossDb);
+  crossDbRef.current = crossDb;
+
   // Keep a ref so that the registered callbacks always see the latest schema
   // without having to re-register Monaco providers on every schema change.
   const dbSchemaRef = useRef(dbSchema);
@@ -106,7 +114,8 @@ export function useWildcardExpansion(
         const wildcardInfo = findWildcardAtPosition(model, pos);
         if (!wildcardInfo) return;
 
-        const resolution = resolveWildcard(model.getValue(), wildcardInfo, schema);
+        const prepared = prepareCrossDatabaseQuery(model.getValue(), schema, crossDbRef.current);
+        const resolution = resolveWildcard(prepared.sql, wildcardInfo, prepared.schema);
         if (!resolution || resolution.totalColumns === 0) return;
 
         // Consume the event and expand
@@ -137,7 +146,7 @@ export function useWildcardExpansion(
           const schema = dbSchemaRef.current;
           const currentEd = editorRef.current;
           if (!schema || !currentEd) return;
-          tryExpand(currentEd, schema, { lineNumber, column });
+          tryExpand(currentEd, schema, crossDbRef.current, { lineNumber, column });
         }
       )
     );
@@ -154,8 +163,10 @@ export function useWildcardExpansion(
             id: string;
             command: { id: string; title: string; arguments: unknown[] };
           }[] = [];
-          const fullText = model.getValue();
-          const lines = fullText.split('\n');
+          const rawText = model.getValue();
+          const prepared = prepareCrossDatabaseQuery(rawText, schema, crossDbRef.current);
+          const fullText = prepared.sql;
+          const lines = rawText.split('\n');
 
           lines.forEach((line, idx) => {
             const lineNumber = idx + 1;
@@ -165,7 +176,7 @@ export function useWildcardExpansion(
               const resolution = resolveWildcard(
                 fullText,
                 { alias: candidate.alias, wildcardRange: candidate.wildcardRange },
-                schema
+                prepared.schema
               );
               if (!resolution || resolution.totalColumns === 0) continue;
 
@@ -198,5 +209,5 @@ export function useWildcardExpansion(
     return () => {
       for (const d of disposables) d.dispose();
     };
-  }, [editorReady]); // editorReady gates registration; live data flows through refs
+  }, [editorReady, crossDb?.version]); // editorReady gates registration; live data flows through refs. A new version refreshes the CodeLens.
 }

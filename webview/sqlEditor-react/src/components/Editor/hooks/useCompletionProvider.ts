@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from 'react';
+import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { editor, languages } from 'monaco-editor';
 import type { DatabaseSchema, TableInfo, ViewInfo, StoredProcedureInfo, FunctionInfo, ColumnInfo } from '../../../types/schema';
 import {
@@ -15,10 +15,20 @@ import {
   buildAugmentedSchema,
   getMainQueryText,
   isCleanStatement,
+  parseQualifiedPrefix,
+  isExecContext,
+  findDatabaseName,
+  getSchemaNames,
+  quoteIfNeeded,
+  formatProcedureParameters,
+  prepareCrossDatabaseQuery,
+  type CrossDatabaseContext,
   type SqlContextType,
 } from '../../../services';
 
 type MonacoType = typeof import('monaco-editor');
+
+export type { CrossDatabaseContext };
 
 /**
  * Registers the T-SQL completion item provider (autocomplete) with Monaco.
@@ -27,8 +37,13 @@ type MonacoType = typeof import('monaco-editor');
 export function useCompletionProvider(
   monacoRef: MutableRefObject<MonacoType | null>,
   dbSchema: DatabaseSchema | undefined,
-  editorReady: boolean
+  editorReady: boolean,
+  crossDb?: CrossDatabaseContext
 ): void {
+  // Read through a ref so database list changes don't re-register the provider
+  const crossDbRef = useRef(crossDb);
+  crossDbRef.current = crossDb;
+
   useEffect(() => {
     if (!monacoRef.current || !dbSchema || !editorReady) return;
 
@@ -62,15 +77,121 @@ export function useCompletionProvider(
         const suggestions: languages.CompletionItem[] = [];
         const fullText = model.getValue();
 
-        // Build augmented schema with CTE definitions as virtual tables
-        const augmentedSchema = buildAugmentedSchema(dbSchema, fullText);
+        // References like `OtherDb.dbo.Table` are resolved against that database's schema:
+        // the `OtherDb.` prefix is blanked out (same length) and the table is added to the schema.
+        const cross = crossDbRef.current;
+        const prepared = prepareCrossDatabaseQuery(fullText, dbSchema, cross);
+        const analysisText = prepared.sql;
+        const analysisTextUntilPosition = analysisText.slice(0, textUntilPosition.length);
+        prepared.missing.forEach((databaseName) => { void cross?.requestSchema(databaseName); });
 
+        // Build augmented schema with CTE definitions as virtual tables
+        const augmentedSchema = buildAugmentedSchema(prepared.schema, analysisText);
+
+        // ---- Cross-database / EXEC completion helpers ----
+        const databases = cross?.databases ?? [];
+        const qualified = parseQualifiedPrefix(lineUntilPosition);
+        const execMode = isExecContext(lineUntilPosition);
+        const triggerSuggest = { id: 'editor.action.triggerSuggest', title: 'Suggest' };
+
+        const loadSchemaFor = (databaseName: string): Promise<DatabaseSchema | null> => {
+          if (cross?.currentDatabase && cross.currentDatabase.toLowerCase() === databaseName.toLowerCase()) {
+            return Promise.resolve(dbSchema);
+          }
+          return cross ? cross.requestSchema(databaseName) : Promise.resolve(null);
+        };
+
+        const displayName = (schemaName: string | undefined, name: string): string =>
+          schemaName && schemaName.toLowerCase() !== 'dbo'
+            ? `[${schemaName}].[${name}]`
+            : quoteIfNeeded(name);
+
+        const procedureItems = (data: DatabaseSchema, schemaFilter: string | null, qualifiedInsert: boolean): languages.CompletionItem[] =>
+          (data.storedProcedures ?? [])
+            .filter((sp) => !schemaFilter || sp.schema.toLowerCase() === schemaFilter.toLowerCase())
+            .map((sp) => {
+              const params = formatProcedureParameters(sp);
+              const text = qualifiedInsert ? quoteIfNeeded(sp.name) : displayName(sp.schema, sp.name);
+              return {
+                label: qualifiedInsert ? sp.name : text,
+                kind: monacoInstance.languages.CompletionItemKind.Function,
+                insertText: text,
+                range,
+                detail: params ? `Stored Procedure (${params})` : 'Stored Procedure',
+                sortText: `1_${sp.schema}_${sp.name}`,
+              };
+            });
+
+        const tableViewItems = (data: DatabaseSchema, schemaFilter: string | null, qualifiedInsert: boolean): languages.CompletionItem[] => {
+          const items: languages.CompletionItem[] = [];
+          const matches = (s: string) => !schemaFilter || s.toLowerCase() === schemaFilter.toLowerCase();
+          data.tables?.filter((t) => matches(t.schema)).forEach((t) => {
+            const text = qualifiedInsert ? quoteIfNeeded(t.name) : displayName(t.schema, t.name);
+            items.push({
+              label: qualifiedInsert ? t.name : text,
+              kind: monacoInstance.languages.CompletionItemKind.Class,
+              insertText: text,
+              range,
+              detail: `Table (${t.columns.length} columns)`,
+              sortText: `1_${t.schema}_${t.name}`,
+            });
+          });
+          data.views?.filter((v) => matches(v.schema)).forEach((v) => {
+            const text = qualifiedInsert ? quoteIfNeeded(v.name) : displayName(v.schema, v.name);
+            items.push({
+              label: qualifiedInsert ? v.name : text,
+              kind: monacoInstance.languages.CompletionItemKind.Interface,
+              insertText: text,
+              range,
+              detail: 'View',
+              sortText: `2_${v.schema}_${v.name}`,
+            });
+          });
+          return items;
+        };
+
+        // Objects of a schema: stored procedures after EXEC, tables and views otherwise
+        const objectItems = (data: DatabaseSchema, schemaFilter: string | null): languages.CompletionItem[] =>
+          execMode ? procedureItems(data, schemaFilter, true) : tableViewItems(data, schemaFilter, true);
+
+        const schemaItems = (data: DatabaseSchema, databaseName: string): languages.CompletionItem[] =>
+          getSchemaNames(data).map((schemaName) => ({
+            label: schemaName,
+            kind: monacoInstance.languages.CompletionItemKind.Module,
+            insertText: `${quoteIfNeeded(schemaName)}.`,
+            range,
+            detail: `Schema in ${databaseName}`,
+            sortText: `0_${schemaName}`,
+            command: triggerSuggest,
+          }));
+
+        const databaseItems = (): languages.CompletionItem[] =>
+          databases.map((name) => ({
+            label: name,
+            kind: monacoInstance.languages.CompletionItemKind.Module,
+            insertText: `${quoteIfNeeded(name)}.`,
+            range,
+            detail: 'Database',
+            sortText: `8_${name}`,
+            command: triggerSuggest,
+          }));
+
+        // `db.schema.` or `db..` -> objects of that database/schema (loaded on demand)
+        if (qualified && (qualified.kind === 'three' || qualified.kind === 'defaultSchema')) {
+          const databaseName = findDatabaseName(qualified.db, databases);
+          if (databaseName) {
+            const schemaFilter = qualified.kind === 'three' ? qualified.schema : 'dbo';
+            return loadSchemaFor(databaseName).then((data) => ({
+              suggestions: data ? objectItems(data, schemaFilter) : [],
+            }));
+          }
+        }
         // Check if we're after a dot (for column suggestions)
         const dotMatch = lineUntilPosition.match(/(\w+)\.\w*$/);
         if (dotMatch) {
           const prefix = dotMatch[1];
           // Use fullText so aliases defined after cursor (e.g. FROM below SELECT) are resolved
-          const tableAlias = findTableForAlias(fullText, prefix, augmentedSchema);
+          const tableAlias = findTableForAlias(analysisText, prefix, augmentedSchema);
 
           if (tableAlias) {
             const columns = getColumnsForTable(tableAlias.schema, tableAlias.table, augmentedSchema);
@@ -86,17 +207,37 @@ export function useCompletionProvider(
           }
         }
 
+        // `db.` -> schemas of that database; `schema.` -> objects of that schema in the current database
+        if (qualified && qualified.kind === 'two') {
+          const databaseName = findDatabaseName(qualified.first, databases);
+          if (databaseName) {
+            return loadSchemaFor(databaseName).then((data) => ({
+              suggestions: data ? schemaItems(data, databaseName) : [],
+            }));
+          }
+          const currentSchemaName = getSchemaNames(dbSchema).find(
+            (s) => s.toLowerCase() === qualified.first.toLowerCase()
+          );
+          if (currentSchemaName) {
+            return { suggestions: objectItems(dbSchema, currentSchemaName) };
+          }
+        }
+
+        // EXEC / EXECUTE -> stored procedures of the current database, plus database names
+        if (execMode) {
+          return { suggestions: [...procedureItems(dbSchema, null, false), ...databaseItems()] };
+        }
         // Analyze SQL context
         const sqlContext = analyzeSqlContext(textUntilPosition, lineUntilPosition);
 
         // Pre-extract tables from main query (excluding CTE bodies) for column suggestion contexts
-        const mainQueryText = getMainQueryText(fullText);
+        const mainQueryText = getMainQueryText(analysisText);
         const tablesInQuery = extractTablesFromQuery(mainQueryText, augmentedSchema);
 
         // Handle different SQL contexts
         switch (sqlContext.type) {
           case 'JOIN_TABLE': {
-            const tablesBeforeCursor = extractTablesFromQuery(textUntilPosition, augmentedSchema);
+            const tablesBeforeCursor = extractTablesFromQuery(analysisTextUntilPosition, augmentedSchema);
             if (tablesBeforeCursor.length > 0) {
               const relatedTables = getRelatedTables(tablesBeforeCursor, augmentedSchema);
 
@@ -150,8 +291,10 @@ export function useCompletionProvider(
                   sortText: `0_${table.name}`,
                 });
               });
+              suggestions.push(...databaseItems());
               return { suggestions };
             }
+            suggestions.push(...databaseItems());
             break;
           }
 
@@ -183,6 +326,7 @@ export function useCompletionProvider(
                 sortText: `2_${view.schema ?? ''}_${view.name}`,
               });
             });
+            suggestions.push(...databaseItems());
             return { suggestions };
           }
 

@@ -261,6 +261,11 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                     await this.sendSchemaUpdate(webviewPanel.webview, message.connectionId);
                     break;
 
+                case 'requestDatabaseSchema':
+                    // Lazy-load the schema of another database (cross-database autocomplete)
+                    await this.sendDatabaseSchema(webviewPanel.webview, message.connectionId, message.database, message.requestId);
+                    break;
+
                 case 'requestPaste':
                     // Handle paste request from webview - read from VS Code clipboard and send back
                     try {
@@ -1359,10 +1364,14 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                 console.log('[SCHEMA] Sample FK:', foreignKeys[0]);
             }
             
+            // Views and stored procedures (used for autocomplete)
+            const { views, storedProcedures } = await this.fetchViewsAndProcedures(connection);
+
             const schema = {
                 tables: tables,
-                views: [], // TODO: Implement views from cache
-                foreignKeys: foreignKeys
+                views: views,
+                foreignKeys: foreignKeys,
+                storedProcedures: storedProcedures
             };
             
             console.log('[SCHEMA] Sending schema update with', schema.tables.length, 'tables and', schema.foreignKeys.length, 'foreign keys');
@@ -1404,6 +1413,125 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
         return result;
     }
 
+    /**
+     * Fetch views (with columns) and stored procedures (with parameters) of the
+     * database the given pool is connected to. Failures (e.g. missing metadata
+     * permissions) result in empty lists so autocomplete keeps working.
+     */
+    private async fetchViewsAndProcedures(pool: any): Promise<{ views: any[]; storedProcedures: any[] }> {
+        const views = await this.fetchObjectColumns(pool, ['V']).catch((err: unknown) => {
+            this.outputChannel.appendLine(`[SqlEditorProvider] Failed to load views: ${err}`);
+            return [] as any[];
+        });
+        const storedProcedures = await this.fetchStoredProcedures(pool).catch((err: unknown) => {
+            this.outputChannel.appendLine(`[SqlEditorProvider] Failed to load stored procedures: ${err}`);
+            return [] as any[];
+        });
+        return { views, storedProcedures };
+    }
+
+    /** Tables or views (by sys.objects type code) with their columns, using one query. */
+    private async fetchObjectColumns(pool: any, types: Array<'U' | 'V'>): Promise<any[]> {
+        const typeList = types.map(t => `'${t}'`).join(', ');
+        const result = await pool.request().query(`
+            SELECT SCHEMA_NAME(o.schema_id) AS [schema], o.name AS objectName,
+                   c.name AS columnName, ty.name AS typeName,
+                   c.is_nullable AS isNullable, c.max_length AS maxLength
+            FROM sys.objects o
+            INNER JOIN sys.columns c ON c.object_id = o.object_id
+            INNER JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+            WHERE o.type IN (${typeList}) AND o.is_ms_shipped = 0
+            ORDER BY SCHEMA_NAME(o.schema_id), o.name, c.column_id
+        `);
+        const objects: any[] = [];
+        let current: any = null;
+        for (const row of result.recordset || []) {
+            if (!current || current.schema !== row.schema || current.name !== row.objectName) {
+                current = { schema: row.schema, name: row.objectName, columns: [] };
+                objects.push(current);
+            }
+            current.columns.push({
+                name: row.columnName,
+                type: row.typeName,
+                nullable: !!row.isNullable,
+                maxLength: row.maxLength
+            });
+        }
+        return objects;
+    }
+
+    /** Stored procedures with their parameters, using one query. */
+    private async fetchStoredProcedures(pool: any): Promise<any[]> {
+        const result = await pool.request().query(`
+            SELECT SCHEMA_NAME(p.schema_id) AS [schema], p.name AS procName,
+                   pr.name AS paramName, ty.name AS typeName,
+                   pr.is_output AS isOutput, pr.has_default_value AS hasDefault
+            FROM sys.procedures p
+            LEFT JOIN sys.parameters pr ON pr.object_id = p.object_id
+            LEFT JOIN sys.types ty ON ty.user_type_id = pr.user_type_id
+            WHERE p.is_ms_shipped = 0
+            ORDER BY SCHEMA_NAME(p.schema_id), p.name, pr.parameter_id
+        `);
+        const procs: any[] = [];
+        let current: any = null;
+        for (const row of result.recordset || []) {
+            if (!current || current.schema !== row.schema || current.name !== row.procName) {
+                current = { schema: row.schema, name: row.procName, parameters: [] };
+                procs.push(current);
+            }
+            if (row.paramName) {
+                current.parameters.push({
+                    name: row.paramName,
+                    type: row.typeName,
+                    mode: row.isOutput ? 'INOUT' : 'IN',
+                    defaultValue: row.hasDefault ? '(has default)' : undefined
+                });
+            }
+        }
+        return procs;
+    }
+
+    /**
+     * Load the schema (tables, views, stored procedures) of another database on
+     * the same server and send it to the webview. Used for cross-database
+     * autocomplete (e.g. typing `OtherDb.dbo.`).
+     */
+    private async sendDatabaseSchema(webview: vscode.Webview, connectionId: string | undefined, database: string, requestId: string) {
+        if (this.disposedWebviews.has(webview)) {
+            return;
+        }
+        const reply = (payload: { schema?: any; error?: string }) => {
+            if (!this.disposedWebviews.has(webview)) {
+                webview.postMessage({ type: 'databaseSchemaUpdate', requestId, database, ...payload });
+            }
+        };
+
+        try {
+            if (!database || typeof database !== 'string') {
+                reply({ error: 'No database specified' });
+                return;
+            }
+            const baseId = connectionId && typeof connectionId === 'string'
+                ? connectionId.split('::')[0]
+                : this.connectionProvider.getCurrentConfig()?.id;
+            const config = baseId ? this.connectionProvider.getConnectionConfig(baseId) : null;
+            if (!config) {
+                reply({ error: 'No active connection' });
+                return;
+            }
+
+            const pool = await this.connectionProvider.createDbPool(config.id, database);
+            const [tables, views, storedProcedures] = await Promise.all([
+                this.fetchObjectColumns(pool, ['U']),
+                this.fetchObjectColumns(pool, ['V']),
+                this.fetchStoredProcedures(pool)
+            ]);
+            reply({ schema: { tables, views, foreignKeys: [], storedProcedures } });
+        } catch (error) {
+            this.outputChannel.appendLine(`[SqlEditorProvider] Failed to load schema for database ${database}: ${error}`);
+            reply({ error: error instanceof Error ? error.message : String(error) });
+        }
+    }
     private async executeQuery(query: string, connectionId: string | null, webview: vscode.Webview, includeActualPlan: boolean = false) {
         if (!query || query.trim().length === 0) {
             webview.postMessage({
@@ -2335,6 +2463,10 @@ COMMIT TRANSACTION;
                         this.webviewSelectedConnection.set(panel.webview, message.connectionId);
                     }
                     await this.sendSchemaUpdate(panel.webview, message.connectionId);
+                    break;
+
+                case 'requestDatabaseSchema':
+                    await this.sendDatabaseSchema(panel.webview, message.connectionId, message.database, message.requestId);
                     break;
 
                 case 'goToDefinition':

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useReducer, useCallback, useMemo, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useReducer, useCallback, useMemo, useRef, useState } from 'react';
 import type {
   IncomingMessage,
   OutgoingMessage,
@@ -304,6 +304,13 @@ interface VSCodeContextValue extends VSCodeState {
   ) => void;
   getExpansionResult: (expansionId: string) => RelationResultsMessage | undefined;
   
+  // Cross-database autocomplete: lazily loads (and caches) another database's schema
+  requestDatabaseSchema: (database: string) => Promise<DatabaseSchema | null>;
+  /** Returns the already loaded schema of another database, if any. */
+  getLoadedDatabaseSchema: (database: string) => DatabaseSchema | undefined;
+  /** Increments each time another database's schema finishes loading. */
+  externalSchemaVersion: number;
+
   // Clipboard
   requestPaste: () => void;
   clearPasteContent: () => void;
@@ -350,6 +357,43 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     console.log('[VSCode] Sending message:', message.type);
     vscode.postMessage(message);
   }, [vscode]);
+
+  // Cross-database schema cache and in-flight requests (refs: read by the message handler)
+  const externalSchemasRef = useRef(new Map<string, DatabaseSchema>());
+  const externalInflightRef = useRef(new Map<string, Promise<DatabaseSchema | null>>());
+  const externalPendingRef = useRef(new Map<string, { key: string; resolve: (s: DatabaseSchema | null) => void; timer: ReturnType<typeof setTimeout> }>());
+  const externalRequestCounterRef = useRef(0);
+  const [externalSchemaVersion, setExternalSchemaVersion] = useState(0);
+
+  const getLoadedDatabaseSchema = useCallback((database: string): DatabaseSchema | undefined => {
+    const connectionId = stateRef.current.currentConnectionId;
+    if (!connectionId || !database) return undefined;
+    return externalSchemasRef.current.get(`${connectionId}::${database.toLowerCase()}`);
+  }, []);
+
+  const requestDatabaseSchema = useCallback((database: string): Promise<DatabaseSchema | null> => {
+    const connectionId = stateRef.current.currentConnectionId;
+    if (!connectionId || !database) return Promise.resolve(null);
+
+    const key = `${connectionId}::${database.toLowerCase()}`;
+    const cached = externalSchemasRef.current.get(key);
+    if (cached) return Promise.resolve(cached);
+    const inflight = externalInflightRef.current.get(key);
+    if (inflight) return inflight;
+
+    const requestId = `dbschema-${++externalRequestCounterRef.current}`;
+    const promise = new Promise<DatabaseSchema | null>((resolve) => {
+      const timer = setTimeout(() => {
+        externalPendingRef.current.delete(requestId);
+        externalInflightRef.current.delete(key);
+        resolve(null);
+      }, 30000);
+      externalPendingRef.current.set(requestId, { key, resolve, timer });
+      postMessage({ type: 'requestDatabaseSchema', requestId, connectionId, database });
+    });
+    externalInflightRef.current.set(key, promise);
+    return promise;
+  }, [postMessage]);
   
   // Message handler
   useEffect(() => {
@@ -401,6 +445,25 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
         case 'schemaUpdate':
           dispatch({ type: 'SET_SCHEMA', schema: message.schema });
           break;
+
+        case 'databaseSchemaUpdate': {
+          const pending = externalPendingRef.current.get(message.requestId);
+          if (pending) {
+            clearTimeout(pending.timer);
+            externalPendingRef.current.delete(message.requestId);
+            externalInflightRef.current.delete(pending.key);
+            if (message.schema) {
+              const schema: DatabaseSchema = { ...emptySchema, ...message.schema };
+              externalSchemasRef.current.set(pending.key, schema);
+              setExternalSchemaVersion((v) => v + 1);
+              pending.resolve(schema);
+            } else {
+              console.warn('[VSCode] Failed to load schema for database', message.database, message.error);
+              pending.resolve(null);
+            }
+          }
+          break;
+        }
           
         case 'executing':
           dispatch({ type: 'SET_EXECUTING', isExecuting: true });
@@ -639,6 +702,9 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     expandRelation,
     getExpansionResult,
     clearAutoExecute,
+    requestDatabaseSchema,
+    getLoadedDatabaseSchema,
+    externalSchemaVersion,
     requestPaste,
     clearPasteContent,
     dismissHistoryInfo,
@@ -656,6 +722,9 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     expandRelation,
     getExpansionResult,
     clearAutoExecute,
+    requestDatabaseSchema,
+    getLoadedDatabaseSchema,
+    externalSchemaVersion,
     requestPaste,
     clearPasteContent,
     dismissHistoryInfo,

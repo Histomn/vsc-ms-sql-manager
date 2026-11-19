@@ -1,7 +1,7 @@
-import { useEffect, type MutableRefObject } from 'react';
+import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { editor } from 'monaco-editor';
 import type { DatabaseSchema } from '../../../types/schema';
-import { validateSql, provideHoverContent, resolveRenameLocation, provideRenameEdits, provideDefinitionLocation } from '../../../services';
+import { validateSql, provideHoverContent, resolveRenameLocation, provideRenameEdits, provideDefinitionLocation, prepareCrossDatabaseQuery, type CrossDatabaseContext } from '../../../services';
 
 type MonacoType = typeof import('monaco-editor');
 
@@ -14,8 +14,12 @@ export function useSchemaProviders(
   editorRef: MutableRefObject<editor.IStandaloneCodeEditor | null>,
   dbSchema: DatabaseSchema | undefined,
   editorReady: boolean,
-  currentConnectionId: string | null
+  currentConnectionId: string | null,
+  crossDb?: CrossDatabaseContext
 ): void {
+  const crossDbRef = useRef(crossDb);
+  crossDbRef.current = crossDb;
+
   useEffect(() => {
     const monacoInstance = monacoRef.current;
     if (!monacoInstance || !editorReady) return;
@@ -38,7 +42,8 @@ export function useSchemaProviders(
           const fullText = model.getValue();
           const lineText = model.getLineContent(position.lineNumber);
           const wordObj = model.getWordAtPosition(position);
-          return provideHoverContent(fullText, lineText, position, wordObj, dbSchema);
+          const prepared = prepareCrossDatabaseQuery(fullText, dbSchema, crossDbRef.current);
+          return provideHoverContent(prepared.sql, lineText, position, wordObj, prepared.schema);
         } catch (err) {
           console.error('[SQL-HOVER] Error in hover provider', err);
         }
@@ -91,8 +96,8 @@ export function useSchemaProviders(
     const revalidateOnSchemaLoad = setTimeout(() => {
       const model = editorRef.current?.getModel();
       if (!model) return;
-      const sql = model.getValue();
-      const markers = validateSql(sql, dbSchema);
+      const prepared = prepareCrossDatabaseQuery(model.getValue(), dbSchema, crossDbRef.current);
+      const markers = validateSql(prepared.sql, prepared.schema);
       const monacoMarkers = markers.map((m) => ({
         severity:
           m.severity === 'error'
@@ -116,8 +121,8 @@ export function useSchemaProviders(
       if (!model) return;
 
       const timeoutId = setTimeout(() => {
-        const sql = model.getValue();
-        const markers = validateSql(sql, dbSchema);
+        const prepared = prepareCrossDatabaseQuery(model.getValue(), dbSchema, crossDbRef.current);
+        const markers = validateSql(prepared.sql, prepared.schema);
 
         const monacoMarkers = markers.map((m) => ({
           severity:
@@ -146,5 +151,5 @@ export function useSchemaProviders(
     return () => {
       disposables.forEach((d) => d.dispose());
     };
-  }, [dbSchema, editorReady, currentConnectionId]);
+  }, [dbSchema, editorReady, currentConnectionId, crossDb?.version]);
 }

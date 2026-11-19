@@ -1,7 +1,9 @@
 export { useCompletionProvider } from './useCompletionProvider';
+export type { CrossDatabaseContext } from './useCompletionProvider';
 export { useEditorActions, findTableAtCursorPosition } from './useEditorActions';
 export type { EditorActionsDeps } from './useEditorActions';
 export { useExecuteActions } from './useExecuteActions';
+export { useCrossDatabasePrefetch } from './useCrossDatabasePrefetch';
 export { useEditorSetup } from './useEditorSetup';
 export { useSchemaProviders } from './useSchemaProviders';
 export { useCteHighlight } from './useCteHighlight';

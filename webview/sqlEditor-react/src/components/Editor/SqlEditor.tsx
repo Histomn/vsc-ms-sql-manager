@@ -1,10 +1,10 @@
-import { useRef, useCallback, useEffect, forwardRef, useImperativeHandle, useState } from 'react';
+import { useRef, useCallback, useEffect, useMemo, forwardRef, useImperativeHandle, useState } from 'react';
 import MonacoEditor, { BeforeMount, OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { format } from 'sql-formatter';
 import { useVSCode } from '../../context/VSCodeContext';
 import { useFormatOptions } from '../Toolbar/FormatButton';
-import { useEditorSetup, useEditorActions, useExecuteActions, useCompletionProvider, useSchemaProviders, useWildcardExpansion, useVariableHighlight, useCteHighlight, useAiInlineCompletions, useHostSnippetCompletions } from './hooks';
+import { useEditorSetup, useEditorActions, useExecuteActions, useCrossDatabasePrefetch, useCompletionProvider, useSchemaProviders, useWildcardExpansion, useVariableHighlight, useCteHighlight, useAiInlineCompletions, useHostSnippetCompletions } from './hooks';
 import './SqlEditor.css';
 
 export interface SqlEditorHandle {
@@ -201,7 +201,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const [editorReady, setEditorReady] = useState(false);
     const lastContextPositionRef = useRef<{ lineNumber: number; column: number } | null>(null);
     const tableAtCursorContextKeyRef = useRef<any>(null);
-    const { dbSchema, requestPaste, pasteContent, clearPasteContent, postMessage, currentConnectionId, currentDatabase, config } = useVSCode();
+    const { dbSchema, requestPaste, pasteContent, clearPasteContent, postMessage, currentConnectionId, currentDatabase, config, databases, requestDatabaseSchema, getLoadedDatabaseSchema, externalSchemaVersion } = useVSCode();
     const dbSchemaRef = useRef(dbSchema);
     const currentConnectionIdRef = useRef(currentConnectionId);
     const currentDatabaseRef = useRef(currentDatabase);
@@ -225,11 +225,22 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       editorRef, monacoRef, editorReady, onExecute,
       config.executeQueryKeybindings, config.executeCurrentStatementKeybindings
     );
-    useCompletionProvider(monacoRef, dbSchema, editorReady);
+    const crossDb = useMemo(
+      () => ({
+        databases,
+        currentDatabase,
+        requestSchema: requestDatabaseSchema,
+        getLoadedSchema: getLoadedDatabaseSchema,
+        version: externalSchemaVersion,
+      }),
+      [databases, currentDatabase, requestDatabaseSchema, getLoadedDatabaseSchema, externalSchemaVersion]
+    );
+    useCrossDatabasePrefetch(editorRef, editorReady, crossDb);
+    useCompletionProvider(monacoRef, dbSchema, editorReady, crossDb);
     useHostSnippetCompletions(monacoRef, editorReady, postMessage);
     useAiInlineCompletions(monacoRef, dbSchemaRef, editorReady, postMessage);
-    useSchemaProviders(monacoRef, editorRef, dbSchema, editorReady, currentConnectionId);
-    useWildcardExpansion(monacoRef, editorRef, dbSchema, editorReady);
+    useSchemaProviders(monacoRef, editorRef, dbSchema, editorReady, currentConnectionId, crossDb);
+    useWildcardExpansion(monacoRef, editorRef, dbSchema, editorReady, crossDb);
     useVariableHighlight(monacoRef, editorRef, config.variableHighlightColor, editorReady);
     useCteHighlight(monacoRef, editorRef, config.cteHighlightColor, editorReady);
 
