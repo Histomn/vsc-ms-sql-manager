@@ -196,6 +196,18 @@ export function useCompletionProvider(
             command: triggerSuggest,
           }));
 
+        // Every table and view of the current database (used while a partial name is typed after JOIN)
+        const allTableItems = (exclude: Set<string>): languages.CompletionItem[] =>
+          tableViewItems(dbSchema, null, false)
+            .filter((item) => typeof item.label === 'string' && !exclude.has(item.label.toLowerCase()))
+            .map((item) => ({
+              ...item,
+              insertText: aliasAllowed && typeof item.insertText === 'string'
+                ? withAlias(item.insertText, String(item.label).replace(/^\[.*?\]\.\[(.*)\]$/, '$1'))
+                : item.insertText,
+              sortText: `6_${String(item.sortText ?? item.label)}`,
+            }));
+
         const databaseItems = (): languages.CompletionItem[] =>
           databases.map((name) => ({
             label: name,
@@ -259,7 +271,13 @@ export function useCompletionProvider(
           return { suggestions: [...procedureItems(dbSchema, null, false), ...databaseItems()] };
         }
         // Analyze SQL context
-        const sqlContext = analyzeSqlContext(textUntilPosition, lineUntilPosition);
+        let sqlContext = analyzeSqlContext(textUntilPosition, lineUntilPosition);
+
+        // A partially typed table name right after FROM (e.g. `FROM arm|`, Ctrl+Space) is still a
+        // table position. The generic analysis treats it as a finished table (keywords only).
+        if (sqlContext.type === 'AFTER_FROM' && word.word && /\bfrom\s+[\[\w$#@]*$/i.test(analysisTextUntilPosition)) {
+          sqlContext = { type: 'FROM', confidence: 'high' };
+        }
 
         // Pre-extract tables from main query (excluding CTE bodies) for column suggestion contexts
         const mainQueryText = getMainQueryText(analysisText);
@@ -322,6 +340,10 @@ export function useCompletionProvider(
                   sortText: `0_${table.name}`,
                 });
               });
+              if (word.word) {
+                const already = new Set(suggestions.map((s) => String(s.label).toLowerCase()));
+                suggestions.push(...allTableItems(already));
+              }
               suggestions.push(...databaseItems());
               return { suggestions };
             }

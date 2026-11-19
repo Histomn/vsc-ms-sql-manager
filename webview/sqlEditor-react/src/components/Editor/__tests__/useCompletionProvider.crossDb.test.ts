@@ -35,7 +35,10 @@ function setup(crossDb: CrossDatabaseContext, options?: { autoAlias?: boolean })
 
   return async (sql: string) => {
     const model = {
-      getWordUntilPosition: () => ({ word: '', startColumn: sql.length + 1, endColumn: sql.length + 1 }),
+      getWordUntilPosition: () => {
+        const word = /[\w$#@]*$/.exec(sql)?.[0] ?? '';
+        return { word, startColumn: sql.length - word.length + 1, endColumn: sql.length + 1 };
+      },
       getValueInRange: ({ startColumn, endColumn, startLineNumber, endLineNumber }: any) =>
         startLineNumber === 1 && endLineNumber === 1 ? sql.slice(startColumn - 1, endColumn - 1) : sql,
       getValue: () => sql,
@@ -87,6 +90,25 @@ describe('useCompletionProvider cross-database completion', () => {
 
     const off = setup(crossDb, { autoAlias: false });
     expect((await off('SELECT * FROM ')).find((i) => i.label === 'Users')?.insertText).toBe('Users');
+  });
+
+  it('keeps suggesting tables when a partial name is typed after FROM (Ctrl+Space)', async () => {
+    const { crossDb } = makeCross();
+    const run = setup(crossDb);
+    const items = await run('SELECT * FROM Us');
+    const labels = items.map((i) => i.label);
+    expect(labels).toContain('Users');
+    expect(labels).toContain('AR');
+  });
+
+  it('keeps suggesting tables and databases when a partial name is typed after JOIN', async () => {
+    const { crossDb } = makeCross();
+    const run = setup(crossDb);
+    const items = await run('SELECT * FROM Users u\nINNER JOIN AR');
+    const labels = items.map((i) => i.label);
+    expect(labels).toContain('AR'); // database name
+    expect(labels).toContain('vUsers'); // not only foreign-key related tables
+    expect(items.find((i) => i.label === 'vUsers')?.insertText).toBe('vUsers vu');
   });
 
   it('suggests database names after FROM', async () => {

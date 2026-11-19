@@ -574,11 +574,13 @@ export function analyzeSqlContext(textUntilPosition: string, lineUntilPosition: 
   const lastSetPos = lowerText.lastIndexOf('set');
   const lastValuesPos = lowerText.lastIndexOf('values');
 
-  // Check for JOIN context
-  const joinMatch = /\b((?:inner|left|right|full|cross)\s+)?join\s*$/i.exec(lowerLine);
-  if (joinMatch) {
+  // Check for JOIN context. A partially typed table name after JOIN (e.g. `JOIN arm|`)
+  // is still a table position, so re-invoking completion (Ctrl+Space) keeps suggesting tables.
+  const joinRe = /\b((?:inner|left|right|full|cross)\s+)?join(?:\s+[\[\w$#@]*)?$/i;
+  if (joinRe.test(lowerLine) || joinRe.test(lowerText)) {
     return { type: 'JOIN_TABLE', confidence: 'high' };
   }
+
 
   // Check for ON clause context
   if (/\bjoin\s+(?:\[?\w+\]?\.)?(?:\[?\w+\]?)(?:\s+(?:as\s+)?(?:\[?\w+\]?))?\s+on\s*/i.test(lowerLine) || /\bon\s*$/i.test(lowerLine)) {
