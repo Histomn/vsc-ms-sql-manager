@@ -22,6 +22,7 @@ import {
   quoteIfNeeded,
   formatProcedureParameters,
   prepareCrossDatabaseQuery,
+  getJoinKeySuggestions,
   type CrossDatabaseContext,
   type SqlContextType,
 } from '../../../services';
@@ -351,6 +352,21 @@ export function useCompletionProvider(
           case 'SELECT':
           case 'WHERE':
           case 'UPDATE_SET': {
+            // JOIN ... ON | -> recommend join keys (foreign keys, then same-named columns)
+            if (sqlContext.type === 'ON_CONDITION') {
+              const tablesBefore = extractTablesFromQuery(analysisTextUntilPosition, augmentedSchema);
+              getJoinKeySuggestions(analysisTextUntilPosition, tablesBefore, augmentedSchema).forEach((key, i) => {
+                suggestions.push({
+                  label: key.text,
+                  kind: monacoInstance.languages.CompletionItemKind.Reference,
+                  detail: key.detail,
+                  insertText: key.text,
+                  range,
+                  sortText: `0_${key.priority}_${String(i).padStart(3, '0')}`,
+                });
+              });
+            }
+
             // In ORDER BY with suggestSortDirection, show ASC/DESC instead of columns
             if (sqlContext.type === 'ORDER_BY' && sqlContext.suggestSortDirection) {
               suggestions.push(
