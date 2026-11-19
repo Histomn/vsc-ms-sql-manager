@@ -170,7 +170,7 @@ export function DataGrid({ data, columns, metadata, resultSetIndex, isSingleResu
       // Also check dbSchema.foreignKeys (like old grid.js) for FK relationships
       // when the column metadata has source table info
       let hasSchemaFKRef = false;
-      if (!hasForeignKeyRefs && colMeta?.sourceTable && colMeta?.sourceSchema && dbSchema?.foreignKeys) {
+      if (!hasForeignKeyRefs && colMeta?.sourceTable && colMeta?.sourceSchema && !colMeta?.sourceDatabase && dbSchema?.foreignKeys) {
         hasSchemaFKRef = dbSchema.foreignKeys.some(
           (fk: any) => fk.fromTable === colMeta.sourceTable && 
                        fk.fromSchema === colMeta.sourceSchema && 
@@ -472,7 +472,7 @@ export function DataGrid({ data, columns, metadata, resultSetIndex, isSingleResu
     let fkRefs = colMeta?.foreignKeyReferences;
     
     // Fallback: check dbSchema.foreignKeys if column metadata has no FK refs
-    if ((!fkRefs || fkRefs.length === 0) && colMeta?.sourceTable && colMeta?.sourceSchema && dbSchema?.foreignKeys) {
+    if ((!fkRefs || fkRefs.length === 0) && colMeta?.sourceTable && colMeta?.sourceSchema && !colMeta?.sourceDatabase && dbSchema?.foreignKeys) {
       const schemaFKs = dbSchema.foreignKeys
         .filter(fk => fk.fromTable === colMeta.sourceTable && 
                       fk.fromSchema === colMeta.sourceSchema && 
@@ -523,7 +523,10 @@ export function DataGrid({ data, columns, metadata, resultSetIndex, isSingleResu
     
     // Build connection ID with database context
     const connId = currentConnectionId || '';
-    const dbName = currentDatabase;
+    // Tables of another database (OtherDb.dbo.Table) are expanded in that database
+    const dbName = metadata?.columns?.find((c) => c.name === columnName)?.sourceDatabase
+      || metadata?.sourceDatabase
+      || currentDatabase;
     
     let fullConnectionId = connId;
     if (connId && dbName && !connId.includes('::')) {
@@ -555,7 +558,7 @@ export function DataGrid({ data, columns, metadata, resultSetIndex, isSingleResu
     });
 
     console.log('[FK Expansion] Requested:', { relation, keyValue, rowIndex, columnName });
-  }, [currentConnectionId, currentDatabase, postMessage, resultSetIndex]);
+  }, [currentConnectionId, currentDatabase, postMessage, resultSetIndex, metadata]);
 
   const handleFKQuickPickSelect = useCallback((relation: ForeignKeyReference) => {
     if (!fkQuickPick) return;
@@ -571,7 +574,9 @@ export function DataGrid({ data, columns, metadata, resultSetIndex, isSingleResu
 
   const handleFKQuickPickOpenQuery = useCallback((query: string) => {
     const connId = currentConnectionId || '';
-    const dbName = currentDatabase;
+    const dbName = metadata?.columns?.find((c) => c.name === fkQuickPick?.columnName)?.sourceDatabase
+      || metadata?.sourceDatabase
+      || currentDatabase;
 
     postMessage({
       type: 'openNewQuery',
@@ -581,7 +586,7 @@ export function DataGrid({ data, columns, metadata, resultSetIndex, isSingleResu
     });
 
     setFkQuickPick(null);
-  }, [currentConnectionId, currentDatabase, postMessage]);
+  }, [currentConnectionId, currentDatabase, postMessage, metadata, fkQuickPick]);
 
   // Handle expansion results from extension
   useEffect(() => {

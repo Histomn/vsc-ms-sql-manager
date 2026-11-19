@@ -409,6 +409,8 @@ export interface QueryMessage {
 export interface ResultSetMetadata {
   sourceTable?: string;
   sourceSchema?: string;
+  /** Set when the source table lives in a database other than the connected one. */
+  sourceDatabase?: string;
   isEditable: boolean;
   primaryKeyColumns?: string[];
   columns: ResultColumnMetadata[];
@@ -420,6 +422,7 @@ export interface ResultColumnMetadata {
   isNullable?: boolean;
   sourceTable?: string;
   sourceSchema?: string;
+  sourceDatabase?: string;
   isPrimaryKey?: boolean;
   isForeignKey?: boolean;
   foreignKeyReferences?: ForeignKeyReference[];

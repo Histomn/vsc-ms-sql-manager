@@ -15,6 +15,16 @@ import { ChartConfigDialog } from './Chart/ChartConfigDialog';
 import { ChartConfig, ChartDataSnapshot, DEFAULT_CHART_COLORS } from '../../types/chart';
 import './ResultsPanel.css';
 
+/** `[db].[schema].[table]` when the table lives in another database, otherwise `[schema].[table]`. */
+function qualifiedTableName(
+  meta: { sourceDatabase?: string },
+  schemaName: string,
+  tableName: string
+): string {
+  const prefix = meta.sourceDatabase ? `[${meta.sourceDatabase}].` : '';
+  return `${prefix}[${schemaName}].[${tableName}]`;
+}
+
 export type TabId = 'results' | 'messages' | 'plan' | 'pendingChanges' | 'charts';
 
 function sqlEscape(value: unknown): string {
@@ -274,12 +284,12 @@ export function ResultsPanel() {
         .join(' AND ');
 
       if (rowChange.isDeleted) {
-        statements.push(`DELETE FROM [${schemaName}].[${tableName}] WHERE ${whereClause};`);
+        statements.push(`DELETE FROM ${qualifiedTableName(meta, schemaName, tableName)} WHERE ${whereClause};`);
       } else if (rowChange.changes.size > 0) {
         const setClauses = Array.from(rowChange.changes.entries())
           .map(([col, vals]) => `    [${col}] = ${sqlEscape((vals as { original: unknown; new: unknown }).new)}`)
           .join(',\n');
-        statements.push(`UPDATE [${schemaName}].[${tableName}]\nSET ${setClauses}\nWHERE ${whereClause};`);
+        statements.push(`UPDATE ${qualifiedTableName(meta, schemaName, tableName)}\nSET ${setClauses}\nWHERE ${whereClause};`);
       }
     }
     return statements;
@@ -307,12 +317,12 @@ export function ResultsPanel() {
       .join(' AND ');
 
     if (rowChange.isDeleted) {
-      return `DELETE FROM [${schemaName}].[${tableName}] WHERE ${whereClause};`;
+      return `DELETE FROM ${qualifiedTableName(meta, schemaName, tableName)} WHERE ${whereClause};`;
     } else if (rowChange.changes.size > 0) {
       const setClauses = Array.from(rowChange.changes.entries())
         .map(([col, vals]) => `    [${col}] = ${sqlEscape((vals as { original: unknown; new: unknown }).new)}`)
         .join(',\n');
-      return `UPDATE [${schemaName}].[${tableName}]\nSET ${setClauses}\nWHERE ${whereClause};`;
+      return `UPDATE ${qualifiedTableName(meta, schemaName, tableName)}\nSET ${setClauses}\nWHERE ${whereClause};`;
     }
     return '';
   }, [lastMetadata, lastColumnNames]);
@@ -344,7 +354,7 @@ export function ResultsPanel() {
     const whereClause = Object.entries(pkValues)
       .map(([col, val]) => `[${col}] = ${sqlEscape(val)}`)
       .join(' AND ');
-    const statement = `UPDATE [${schemaName}].[${tableName}]\nSET     [${columnName}] = ${sqlEscape(cellChange.new)}\nWHERE ${whereClause};`;
+    const statement = `UPDATE ${qualifiedTableName(meta, schemaName, tableName)}\nSET     [${columnName}] = ${sqlEscape(cellChange.new)}\nWHERE ${whereClause};`;
 
     const changeMap: Record<string, { oldValue: any; newValue: any }> = {
       [columnName]: { oldValue: cellChange.original, newValue: cellChange.new },

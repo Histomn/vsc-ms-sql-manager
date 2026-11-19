@@ -215,16 +215,6 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     // Hooks
     const setupEditor = useEditorSetup(editorRef, monacoRef, setEditorReady, formatOptions, initialValue);
 
-    const registerActions = useEditorActions({
-      editorRef, monacoRef, dbSchemaRef, currentConnectionIdRef, currentDatabaseRef,
-      lastContextPositionRef, tableAtCursorContextKeyRef,
-      requestPaste, postMessage, currentConnectionId, currentDatabase,
-    });
-
-    useExecuteActions(
-      editorRef, monacoRef, editorReady, onExecute,
-      config.executeQueryKeybindings, config.executeCurrentStatementKeybindings
-    );
     const crossDb = useMemo(
       () => ({
         databases,
@@ -235,6 +225,17 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       }),
       [databases, currentDatabase, requestDatabaseSchema, getLoadedDatabaseSchema, externalSchemaVersion]
     );
+    const registerActions = useEditorActions({
+      editorRef, monacoRef, dbSchemaRef, currentConnectionIdRef, currentDatabaseRef,
+      lastContextPositionRef, tableAtCursorContextKeyRef,
+      requestPaste, postMessage, currentConnectionId, currentDatabase, crossDb,
+    });
+
+    useExecuteActions(
+      editorRef, monacoRef, editorReady, onExecute,
+      config.executeQueryKeybindings, config.executeCurrentStatementKeybindings
+    );
+
     useCrossDatabasePrefetch(editorRef, editorReady, crossDb);
     useCompletionProvider(monacoRef, dbSchema, editorReady, crossDb);
     useHostSnippetCompletions(monacoRef, editorReady, postMessage);

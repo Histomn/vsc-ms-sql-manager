@@ -37,6 +37,10 @@ export interface CrossDatabaseReference {
   start: number;
   /** Offset just after the database part and its dot (`Db.`), or after `Db..`. */
   prefixEnd: number;
+  /** Offset of the first character of the object name. */
+  nameStart: number;
+  /** Offset just after the object name. */
+  end: number;
 }
 
 /** Replaces string literals and comments with spaces (same length). */
@@ -104,6 +108,8 @@ export function findCrossDatabaseReferences(sql: string, databases: string[]): C
       name: unbracket(m[3]),
       start: m.index,
       prefixEnd: hasSchema ? firstPartEnd + 1 : firstPartEnd + 2,
+      nameStart: m.index + m[0].length - m[3].length,
+      end: m.index + m[0].length,
     });
   }
   return refs;

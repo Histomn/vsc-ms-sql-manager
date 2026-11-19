@@ -1,8 +1,8 @@
-import { useCallback, type MutableRefObject } from 'react';
+import { useCallback, useRef, type MutableRefObject } from 'react';
 import type { editor } from 'monaco-editor';
 import type { DatabaseSchema } from '../../../types/schema';
 import type { OutgoingMessage } from '../../../types/messages';
-import { findTable } from '../../../services';
+import { findTable, findCrossDatabaseReferences, prepareCrossDatabaseQuery, type CrossDatabaseContext } from '../../../services';
 import { copyToClipboard } from '../../../services/exportService';
 
 type MonacoType = typeof import('monaco-editor');
@@ -23,16 +23,20 @@ export interface EditorActionsDeps {
   postMessage: (message: OutgoingMessage) => void;
   currentConnectionId?: string | null;
   currentDatabase?: string | null;
+  /** Used to resolve tables written as `OtherDb.schema.Table`. */
+  crossDb?: CrossDatabaseContext;
 }
 
 /**
  * Helper: find the table at a given editor cursor position.
+ * For cross-database references (`OtherDb.dbo.Table`) the result includes `database`.
  */
 export function findTableAtCursorPosition(
   ed: Pick<editor.IStandaloneCodeEditor, 'getModel' | 'getPosition'>,
   position: { lineNumber: number; column: number } | null,
-  schema?: DatabaseSchema
-): { schema: string; table: string } | null {
+  schema?: DatabaseSchema,
+  cross?: CrossDatabaseContext
+): { schema: string; table: string; database?: string } | null {
   if (!position) return null;
   const model = ed.getModel();
   if (!model) return null;
@@ -48,11 +52,22 @@ export function findTableAtCursorPosition(
     normalizedName = normalizedName.substring(1, normalizedName.length - 1);
   }
 
-  if (schema) {
-    return findTable(normalizedName, schema);
+  if (!schema) return null;
+
+  // Cross-database reference such as `OtherDb.dbo.Table`
+  if (cross && typeof model.getValue === 'function' && typeof model.getOffsetAt === 'function') {
+    const text = model.getValue();
+    const wordStart = model.getOffsetAt({ lineNumber: position.lineNumber, column: wordInfo.startColumn });
+    const ref = findCrossDatabaseReferences(text, cross.databases).find((r) => wordStart >= r.nameStart && wordStart < r.end);
+    if (ref) {
+      const prepared = prepareCrossDatabaseQuery(text, schema, cross);
+      const found = findTable(normalizedName, prepared.schema);
+      const isCurrent = cross.currentDatabase?.toLowerCase() === ref.database.toLowerCase();
+      return found ? { ...found, database: isCurrent ? undefined : ref.database } : null;
+    }
   }
 
-  return null;
+  return findTable(normalizedName, schema);
 }
 
 /**
@@ -72,6 +87,10 @@ export function useEditorActions(deps: EditorActionsDeps) {
     currentConnectionId,
     currentDatabase,
   } = deps;
+
+  // Read through a ref: the cross-database context changes as schemas load
+  const crossDbRef = useRef(deps.crossDb);
+  crossDbRef.current = deps.crossDb;
 
   const registerActions = useCallback(
     (editor: editor.IStandaloneCodeEditor, monacoInstance: MonacoType) => {
@@ -168,7 +187,7 @@ export function useEditorActions(deps: EditorActionsDeps) {
             const pos = (e.target && e.target.position) ? e.target.position : editor.getPosition();
             lastContextPositionRef.current = pos;
 
-            const tableInfo = findTableAtCursorPosition(editor, pos, dbSchemaRef.current);
+            const tableInfo = findTableAtCursorPosition(editor, pos, dbSchemaRef.current, crossDbRef.current);
             tableAtCursorContextKeyRef.current?.set(!!tableInfo);
           }
         } catch (err) {
@@ -186,14 +205,14 @@ export function useEditorActions(deps: EditorActionsDeps) {
         precondition: 'tableAtCursor',
         run: (ed) => {
           const position = lastContextPositionRef.current || ed.getPosition();
-          const tableInfo = findTableAtCursorPosition(ed, position, dbSchemaRef.current);
+          const tableInfo = findTableAtCursorPosition(ed, position, dbSchemaRef.current, crossDbRef.current);
           if (tableInfo) {
             postMessage({
               type: 'scriptRowAsInsert',
               schema: tableInfo.schema,
               table: tableInfo.table,
               connectionId: currentConnectionIdRef.current || '',
-              database: currentDatabaseRef.current || '',
+              database: tableInfo.database || currentDatabaseRef.current || '',
             });
           }
         },
@@ -209,14 +228,14 @@ export function useEditorActions(deps: EditorActionsDeps) {
         precondition: 'tableAtCursor',
         run: (ed) => {
           const position = lastContextPositionRef.current || ed.getPosition();
-          const tableInfo = findTableAtCursorPosition(ed, position, dbSchemaRef.current);
+          const tableInfo = findTableAtCursorPosition(ed, position, dbSchemaRef.current, crossDbRef.current);
           if (tableInfo) {
             postMessage({
               type: 'scriptRowAsUpdate',
               schema: tableInfo.schema,
               table: tableInfo.table,
               connectionId: currentConnectionIdRef.current || '',
-              database: currentDatabaseRef.current || '',
+              database: tableInfo.database || currentDatabaseRef.current || '',
             });
           }
         },
@@ -232,14 +251,14 @@ export function useEditorActions(deps: EditorActionsDeps) {
         precondition: 'tableAtCursor',
         run: (ed) => {
           const position = lastContextPositionRef.current || ed.getPosition();
-          const tableInfo = findTableAtCursorPosition(ed, position, dbSchemaRef.current);
+          const tableInfo = findTableAtCursorPosition(ed, position, dbSchemaRef.current, crossDbRef.current);
           if (tableInfo) {
             postMessage({
               type: 'scriptRowAsDelete',
               schema: tableInfo.schema,
               table: tableInfo.table,
               connectionId: currentConnectionIdRef.current || '',
-              database: currentDatabaseRef.current || '',
+              database: tableInfo.database || currentDatabaseRef.current || '',
             });
           }
         },

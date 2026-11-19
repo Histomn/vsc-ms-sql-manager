@@ -19,6 +19,7 @@ export interface ColumnMetadata {
     isNullable: boolean;
     sourceTable?: string;
     sourceSchema?: string;
+    sourceDatabase?: string; // Set when the source table is in a database other than the connected one
     sourceColumn?: string;
     isPrimaryKey: boolean;
     isIdentity: boolean;
@@ -31,6 +32,7 @@ export interface ResultSetMetadata {
     primaryKeyColumns: string[];
     sourceTable?: string;
     sourceSchema?: string;
+    sourceDatabase?: string;
     hasMultipleTables: boolean;
 }
 
@@ -480,13 +482,37 @@ export class QueryExecutor {
             
             // Try to detect source tables from the query
             const tableInfo = this.parseQueryForTables(query);
-            
+
+            // Tables are grouped by database: tables of the connected database (no prefix,
+            // or prefixed with its own name) and tables of other databases (OtherDb.dbo.T).
+            let connectedDatabase: string | undefined;
+            const externalTables = new Map<string, Array<{schema?: string, table: string, alias?: string}>>();
+            const localTables: Array<{schema?: string, table: string, alias?: string}> = [];
+            try {
+                const activeInfo = this.connectionProvider.getActiveConnectionInfo();
+                connectedDatabase = activeInfo?.database
+                    || (activeInfo ? this.connectionProvider.getCurrentDatabase(activeInfo.id) : undefined)
+                    || undefined;
+            } catch {
+                // keep undefined
+            }
+            for (const t of tableInfo.tables) {
+                if (t.database && t.database.toLowerCase() !== connectedDatabase?.toLowerCase()) {
+                    const key = t.database;
+                    const list = externalTables.get(key) ?? [];
+                    list.push(t);
+                    externalTables.set(key, list);
+                } else {
+                    localTables.push(t);
+                }
+            }
+
             // Get cached schema once for all columns (if available)
             let cachedSchema: any = null;
             try {
                 const activeConnection = this.connectionProvider.getActiveConnectionInfo();
                 
-                if (activeConnection?.server && tableInfo.tables.length > 0) {
+                if (activeConnection?.server && localTables.length > 0) {
                     // Get current database - either from connection info or from provider for server connections
                     let currentDatabase = activeConnection.database;
                     if (!currentDatabase) {
@@ -507,6 +533,31 @@ export class QueryExecutor {
                 this.outputChannel.appendLine(`[QueryExecutor] Error getting cached schema: ${error}`);
                 // Silently continue without cache
             }
+
+            // Lookup groups: the connected database first, then each other database
+            // referenced in the query (with a pool and schema cache scoped to that database).
+            const lookupGroups: Array<{ database?: string; tables: Array<{schema?: string, table: string, alias?: string}>; cachedSchema: any; pool: DBPool }> = [
+                { tables: localTables, cachedSchema, pool: connection }
+            ];
+            for (const [databaseName, tablesInDb] of externalTables) {
+                try {
+                    const activeConnection = this.connectionProvider.getActiveConnectionInfo();
+                    if (!activeConnection?.id || !activeConnection.server) continue;
+                    const externalPool = await this.connectionProvider.createDbPool(activeConnection.id, databaseName);
+                    let externalCache: any = null;
+                    try {
+                        externalCache = await SchemaCache.getInstance(this.context).getSchema(
+                            { server: activeConnection.server, database: databaseName },
+                            externalPool
+                        );
+                    } catch (cacheError) {
+                        this.outputChannel.appendLine(`[QueryExecutor] Error getting cached schema for ${databaseName}: ${cacheError}`);
+                    }
+                    lookupGroups.push({ database: databaseName, tables: tablesInDb, cachedSchema: externalCache, pool: externalPool });
+                } catch (poolError) {
+                    this.outputChannel.appendLine(`[QueryExecutor] Could not open database ${databaseName} for result metadata: ${poolError}`);
+                }
+            }
             
             // Get driver-reported column types for this result set
             const driverColumnTypes = driverColumnTypesList ? driverColumnTypesList[i] : undefined;
@@ -526,22 +577,27 @@ export class QueryExecutor {
                 };
 
                 // Try to detect column metadata from cache if we have table information
-                if (tableInfo.tables.length > 0) {
+                for (const group of lookupGroups) {
+                    if (group.tables.length === 0) continue;
                     try {
                         let colInfo: Partial<ColumnMetadata> | null = null;
                         
                         // Try cache first
-                        if (cachedSchema) {
-                            colInfo = this.getColumnInfoFromCache(cachedSchema, tableInfo.tables, colName);
+                        if (group.cachedSchema) {
+                            colInfo = this.getColumnInfoFromCache(group.cachedSchema, group.tables, colName);
                         }
                         
                         // Fallback to direct query if cache didn't provide info
                         if (!colInfo) {
-                            colInfo = await this.getColumnInfoDirect(connection, tableInfo.tables, colName);
+                            colInfo = await this.getColumnInfoDirect(group.pool, group.tables, colName);
                         }
                         
                         if (colInfo) {
                             Object.assign(colMetadata, colInfo);
+                            if (group.database) {
+                                colMetadata.sourceDatabase = group.database;
+                            }
+                            break;
                         }
                     } catch (error) {
                         // Silently continue without metadata for this column
@@ -578,6 +634,7 @@ export class QueryExecutor {
                 primaryKeyColumns,
                 sourceTable: sourceTables.length === 1 ? sourceTables[0] : undefined,
                 sourceSchema: columns[0]?.sourceSchema,
+                sourceDatabase: columns.find(c => c.sourceDatabase)?.sourceDatabase,
                 hasMultipleTables
             });
         }
@@ -607,29 +664,36 @@ export class QueryExecutor {
     /**
      * Parse SQL query to extract table names (basic implementation)
      */
-    private parseQueryForTables(query: string): { tables: Array<{schema?: string, table: string, alias?: string}> } {
-        const tables: Array<{schema?: string, table: string, alias?: string}> = [];
+    private parseQueryForTables(query: string): { tables: Array<{database?: string, schema?: string, table: string, alias?: string}> } {
+        const tables: Array<{database?: string, schema?: string, table: string, alias?: string}> = [];
         
         // Simple regex to find table references in FROM and JOIN clauses
         // This is a basic implementation - may not handle all edge cases
-        const fromRegex = /FROM\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?(?:\s+(?:AS\s+)?(\w+))?/gi;
-        const joinRegex = /JOIN\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?(?:\s+(?:AS\s+)?(\w+))?/gi;
+        // The name part accepts `table`, `schema.table`, `db.schema.table` and `db..table`.
+        const namePart = '((?:\\[[^\\]]+\\]|\\w+)(?:\\.(?:\\[[^\\]]+\\]|\\w*)){0,2})';
+        const aliasPart = '(?:\\s+(?:AS\\s+)?(\\w+))?';
+        const fromRegex = new RegExp(`FROM\\s+${namePart}${aliasPart}`, 'gi');
+        const joinRegex = new RegExp(`JOIN\\s+${namePart}${aliasPart}`, 'gi');
+
+        const addMatch = (name: string, alias: string | undefined) => {
+            // Split on dots that are not inside [brackets], then strip the brackets
+            const parts = name.split(/\.(?![^\[]*\])/).map(p => p.replace(/^\[|\]$/g, ''));
+            if (parts.length === 0 || !parts[parts.length - 1]) {
+                return;
+            }
+            const table = parts[parts.length - 1];
+            const schema = parts.length >= 2 ? (parts[parts.length - 2] || undefined) : undefined;
+            const database = parts.length >= 3 ? (parts[0] || undefined) : undefined;
+            tables.push({ database, schema, table, alias });
+        };
         
         let match;
         while ((match = fromRegex.exec(query)) !== null) {
-            tables.push({
-                schema: match[1],
-                table: match[2],
-                alias: match[3]
-            });
+            addMatch(match[1], match[2]);
         }
         
         while ((match = joinRegex.exec(query)) !== null) {
-            tables.push({
-                schema: match[1],
-                table: match[2],
-                alias: match[3]
-            });
+            addMatch(match[1], match[2]);
         }
         
         return { tables };

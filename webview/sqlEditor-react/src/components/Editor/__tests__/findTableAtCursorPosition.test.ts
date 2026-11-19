@@ -79,3 +79,46 @@ describe('findTableAtCursorPosition', () => {
     expect(result).toEqual({ schema: 'sales', table: 'Products' });
   });
 });
+describe('findTableAtCursorPosition (cross-database)', () => {
+  const otherSchema: DatabaseSchema = {
+    tables: [{ schema: 'dbo', name: 'AMRTZ_INST_SCHDL', columns: [{ name: 'DUE_DT', type: 'date', nullable: true }] }],
+    views: [],
+    foreignKeys: [],
+  };
+  const sql = 'SELECT * FROM AR.dbo.AMRTZ_INST_SCHDL';
+  const nameCol = sql.indexOf('AMRTZ_INST_SCHDL') + 1;
+  const editorFor = (text: string, word: string, startColumn: number) => ({
+    getModel: () => ({
+      getWordAtPosition: () => ({ word, startColumn, endColumn: startColumn + word.length }),
+      getValue: () => text,
+      getOffsetAt: (p: { lineNumber: number; column: number }) => p.column - 1,
+    }),
+    getPosition: () => ({ lineNumber: 1, column: startColumn }),
+  });
+  const cross = (loaded: Record<string, DatabaseSchema>, currentDatabase = 'ACCRUAL') => ({
+    databases: ['ACCRUAL', 'AR'],
+    currentDatabase,
+    requestSchema: async () => null,
+    getLoadedSchema: (db: string) => loaded[db],
+    version: 1,
+  });
+
+  it('returns the table with its database for OtherDb.schema.Table', () => {
+    const ed = editorFor(sql, 'AMRTZ_INST_SCHDL', nameCol);
+    const result = findTableAtCursorPosition(ed as any, { lineNumber: 1, column: nameCol }, testSchema, cross({ AR: otherSchema }));
+    expect(result).toEqual({ schema: 'dbo', table: 'AMRTZ_INST_SCHDL', database: 'AR' });
+  });
+
+  it('returns null until the other database schema is loaded', () => {
+    const ed = editorFor(sql, 'AMRTZ_INST_SCHDL', nameCol);
+    expect(findTableAtCursorPosition(ed as any, { lineNumber: 1, column: nameCol }, testSchema, cross({}))).toBeNull();
+  });
+
+  it('omits the database when it is the connected one', () => {
+    const text = 'SELECT * FROM ACCRUAL.dbo.Users';
+    const col = text.indexOf('Users') + 1;
+    const ed = editorFor(text, 'Users', col);
+    const result = findTableAtCursorPosition(ed as any, { lineNumber: 1, column: col }, testSchema, cross({}));
+    expect(result).toEqual({ schema: 'dbo', table: 'Users', database: undefined });
+  });
+});
