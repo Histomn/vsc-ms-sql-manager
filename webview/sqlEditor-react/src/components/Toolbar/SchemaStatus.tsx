@@ -15,7 +15,7 @@ function StateIcon({ state }: { state: SchemaLoadStatus['state'] }) {
  * is loading, or failed to load.
  */
 export function SchemaStatus() {
-  const { schemaStatuses } = useVSCode();
+  const { schemaStatuses, reloadSchema } = useVSCode();
   const statuses: SchemaLoadStatus[] = schemaStatuses ?? [];
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -65,7 +65,18 @@ export function SchemaStatus() {
 
       {open && (
         <div className="schema-status-popover" role="dialog" aria-label="Loaded schemas">
-          <div className="schema-status-title">Schemas for autocomplete</div>
+          <div className="schema-status-header">
+            <div className="schema-status-title">Schemas for autocomplete</div>
+            <button
+              type="button"
+              className="schema-reload-all"
+              title="Reload every loaded schema from the server"
+              disabled={loading}
+              onClick={() => reloadSchema?.()}
+            >
+              Reload all
+            </button>
+          </div>
           <ul>
             {statuses.map((s) => (
               <li key={s.key} className={`schema-status-item schema-${s.state}`}>
@@ -89,6 +100,19 @@ export function SchemaStatus() {
                     </div>
                   )}
                 </div>
+                <button
+                  type="button"
+                  className="schema-reload-button"
+                  title={`Reload the ${s.database} schema from the server`}
+                  aria-label={`Reload ${s.database} schema`}
+                  disabled={s.state === 'loading'}
+                  onClick={() => reloadSchema?.(s.database)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M20 11a8 8 0 1 0 -2.3 5.7" />
+                    <path d="M20 4v7h-7" />
+                  </svg>
+                </button>
               </li>
             ))}
           </ul>

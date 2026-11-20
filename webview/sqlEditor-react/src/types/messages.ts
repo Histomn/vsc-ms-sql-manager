@@ -53,6 +53,13 @@ export interface DatabaseSchemaUpdateMessage {
   error?: string;
 }
 
+/** The schema of the connected database could not be reloaded; the previous schema stays in use. */
+export interface SchemaReloadFailedMessage {
+  type: 'schemaReloadFailed';
+  database?: string;
+  error: string;
+}
+
 /** Progress of requestDatabaseSchema. */
 export interface DatabaseSchemaProgressMessage {
   type: 'databaseSchemaProgress';
@@ -194,6 +201,7 @@ export type IncomingMessage =
   | SchemaUpdateMessage
   | DatabaseSchemaUpdateMessage
   | DatabaseSchemaProgressMessage
+  | SchemaReloadFailedMessage
   | ObjectDefinitionMessage
   | ExecutingMessage
   | ResultsMessage
@@ -248,6 +256,12 @@ export interface SwitchDatabaseOutgoing {
   type: 'switchDatabase';
   connectionId: string;
   databaseName: string;
+}
+
+export interface ReloadSchemaOutgoing {
+  type: 'reloadSchema';
+  connectionId: string;
+  database?: string;
 }
 
 export interface RequestObjectDefinitionOutgoing {
@@ -401,6 +415,7 @@ export type OutgoingMessage =
   | SwitchDatabaseOutgoing
   | RequestDatabaseSchemaOutgoing
   | RequestObjectDefinitionOutgoing
+  | ReloadSchemaOutgoing
   | CommitChangesOutgoing
   | ExpandRelationOutgoing
   | OpenNewQueryOutgoing

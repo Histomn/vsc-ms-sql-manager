@@ -80,6 +80,81 @@ describe('VSCodeContext - schema loading status', () => {
     expect(result.current.getLoadedDatabaseSchema('AR')?.tables).toHaveLength(2);
   });
 
+  it('reloads the connected database through the extension', () => {
+    const { result } = render();
+    connect(result);
+    send({ type: 'schemaUpdate', schema: { tables: [], views: [], foreignKeys: [] } });
+    postMessageMock.mockClear();
+
+    act(() => result.current.reloadSchema('master'));
+    expect(postMessageMock).toHaveBeenCalledWith({ type: 'reloadSchema', connectionId: 'c1', database: 'master' });
+    expect(result.current.schemaStatuses[0]).toMatchObject({ database: 'master', state: 'loading' });
+
+    send({ type: 'schemaUpdate', schema: { tables: [{ schema: 'dbo', name: 'New', columns: [] }], views: [], foreignKeys: [] } });
+    expect(result.current.schemaStatuses[0]).toMatchObject({ state: 'loaded', tables: 1 });
+  });
+
+  it('keeps the previous schema and reports an error when a reload fails', () => {
+    const { result } = render();
+    connect(result);
+    send({ type: 'schemaUpdate', schema: { tables: [{ schema: 'dbo', name: 'Old', columns: [] }], views: [], foreignKeys: [] } });
+
+    act(() => result.current.reloadSchema('master'));
+    send({ type: 'schemaReloadFailed', database: 'master', error: 'Timeout' });
+    expect(result.current.dbSchema.tables).toHaveLength(1);
+    expect(result.current.schemaStatuses[0]).toMatchObject({ state: 'error', error: 'Reload failed, previous schema kept: Timeout' });
+
+    // A later successful reload clears the error
+    act(() => result.current.reloadSchema('master'));
+    send({ type: 'schemaUpdate', schema: { tables: [], views: [], foreignKeys: [] } });
+    expect(result.current.schemaStatuses[0].state).toBe('loaded');
+  });
+
+  it('forces another database to be requested again and keeps the old schema until the new one arrives', async () => {
+    const { result } = render();
+    connect(result);
+    send({ type: 'schemaUpdate', schema: { tables: [], views: [], foreignKeys: [] } });
+
+    let first!: Promise<unknown>;
+    act(() => { first = result.current.requestDatabaseSchema('AR'); });
+    const req1 = postMessageMock.mock.calls.map((c) => c[0]).find((m) => m.type === 'requestDatabaseSchema');
+    send({ type: 'databaseSchemaUpdate', requestId: req1.requestId, database: 'AR', schema: { tables: [{ schema: 'dbo', name: 'A', columns: [] }], views: [], foreignKeys: [] } });
+    await first;
+
+    // A normal request is served from the cache
+    postMessageMock.mockClear();
+    await act(async () => { await result.current.requestDatabaseSchema('AR'); });
+    expect(postMessageMock).not.toHaveBeenCalled();
+
+    // Reload requests the schema again, keeping the old one and its counts meanwhile
+    act(() => result.current.reloadSchema('AR'));
+    const req2 = postMessageMock.mock.calls.map((c) => c[0]).find((m) => m.type === 'requestDatabaseSchema');
+    expect(req2).toBeDefined();
+    expect(result.current.getLoadedDatabaseSchema('AR')?.tables).toHaveLength(1);
+    expect(result.current.schemaStatuses.find((s) => s.database === 'AR')).toMatchObject({ state: 'loading', tables: 1 });
+
+    send({ type: 'databaseSchemaUpdate', requestId: req2.requestId, database: 'AR', schema: { tables: [], views: [], foreignKeys: [] } });
+    expect(result.current.getLoadedDatabaseSchema('AR')?.tables).toHaveLength(0);
+    expect(result.current.schemaStatuses.find((s) => s.database === 'AR')).toMatchObject({ state: 'loaded', tables: 0 });
+  });
+
+  it('reload all refreshes the connected database and every loaded database', async () => {
+    const { result } = render();
+    connect(result);
+    send({ type: 'schemaUpdate', schema: { tables: [], views: [], foreignKeys: [] } });
+    let first!: Promise<unknown>;
+    act(() => { first = result.current.requestDatabaseSchema('AR'); });
+    const req1 = postMessageMock.mock.calls.map((c) => c[0]).find((m) => m.type === 'requestDatabaseSchema');
+    send({ type: 'databaseSchemaUpdate', requestId: req1.requestId, database: 'AR', schema: { tables: [], views: [], foreignKeys: [] } });
+    await first;
+
+    postMessageMock.mockClear();
+    act(() => result.current.reloadSchema());
+    const sent = postMessageMock.mock.calls.map((c) => c[0]);
+    expect(sent.some((m) => m.type === 'reloadSchema' && m.database === 'master')).toBe(true);
+    expect(sent.some((m) => m.type === 'requestDatabaseSchema' && m.database === 'AR')).toBe(true);
+  });
+
   it('marks a failed load as an error with its message', async () => {
     const { result } = render();
     connect(result);

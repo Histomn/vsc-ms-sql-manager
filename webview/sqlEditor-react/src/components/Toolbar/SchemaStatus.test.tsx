@@ -41,6 +41,31 @@ describe('SchemaStatus', () => {
     expect(screen.getByText('Permission denied')).toBeDefined();
   });
 
+  it('reloads one database or all databases from the popover', () => {
+    const reloadSchema = vi.fn();
+    const settled: SchemaLoadStatus[] = [
+      { ...base, key: 'c1::current', database: 'master', state: 'loaded', isCurrent: true },
+      { ...base, key: 'c1::ar', database: 'AR', state: 'loaded' },
+    ];
+    vi.mocked(useVSCode).mockReturnValue({ schemaStatuses: settled, reloadSchema } as any);
+    render(<SchemaStatus />);
+    fireEvent.click(screen.getByRole('button', { name: /\d\/\d/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload AR schema' }));
+    expect(reloadSchema).toHaveBeenLastCalledWith('AR');
+
+    fireEvent.click(screen.getByText('Reload all'));
+    expect(reloadSchema).toHaveBeenLastCalledWith();
+  });
+
+  it('disables reload for a database that is still loading', () => {
+    vi.mocked(useVSCode).mockReturnValue({ schemaStatuses: statuses, reloadSchema: vi.fn() } as any);
+    render(<SchemaStatus />);
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect((screen.getByRole('button', { name: 'Reload AR schema' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Reload master schema' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('closes the popover on Escape', () => {
     vi.mocked(useVSCode).mockReturnValue({ schemaStatuses: statuses } as any);
     render(<SchemaStatus />);

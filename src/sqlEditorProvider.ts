@@ -263,6 +263,11 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                     await this.sendSchemaUpdate(webviewPanel.webview, message.connectionId);
                     break;
 
+                case 'reloadSchema':
+                    // Re-read the schema of the connected database from the server (bypassing the cache)
+                    await this.reloadSchema(webviewPanel.webview, message.connectionId, message.database);
+                    break;
+
                 case 'requestObjectDefinition':
                     // Definition (script) of a table, view or stored procedure for the peek widget
                     await this.sendObjectDefinition(webviewPanel.webview, message.connectionId, message.database, message.schema, message.name, message.requestId);
@@ -1555,6 +1560,53 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
         }
     }
     /**
+     * Reload the autocomplete schema of the connected database: refresh the schema cache from the
+     * server and send the new schema to the webview. On failure the webview keeps its previous schema.
+     */
+    private async reloadSchema(webview: vscode.Webview, connectionId: string | undefined, database: string | undefined) {
+        if (this.disposedWebviews.has(webview)) {
+            return;
+        }
+        const fail = (error: string) => {
+            if (!this.disposedWebviews.has(webview)) {
+                webview.postMessage({ type: 'schemaReloadFailed', database, error });
+            }
+        };
+
+        try {
+            const baseId = connectionId && typeof connectionId === 'string'
+                ? connectionId.split('::')[0]
+                : this.connectionProvider.getCurrentConfig()?.id;
+            const dbName = database || (connectionId && connectionId.includes('::') ? connectionId.split('::')[1] : undefined);
+            const config = baseId ? this.connectionProvider.getConnectionConfig(baseId) : null;
+            if (!config) {
+                fail('No active connection');
+                return;
+            }
+
+            const pool: any = dbName
+                ? await this.connectionProvider.createDbPool(config.id, dbName)
+                : (this.connectionProvider.getConnection(config.id) || this.connectionProvider.getConnection());
+            if (!pool) {
+                fail('No active connection');
+                return;
+            }
+
+            // Must match the cache key used by sendSchemaUpdate
+            const connInfo = {
+                server: (config as any).server || (config as any).host || 'unknown',
+                database: dbName || config.database || pool.config?.database || 'master'
+            };
+            this.outputChannel.appendLine(`[SqlEditorProvider] Reloading schema for ${connInfo.server}/${connInfo.database}`);
+            await this.schemaCache.refreshAll(connInfo, pool);
+            await this.sendSchemaUpdate(webview, dbName ? `${config.id}::${dbName}` : config.id);
+        } catch (error) {
+            this.outputChannel.appendLine(`[SqlEditorProvider] Failed to reload schema: ${error}`);
+            fail(error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    /**
      * Send the definition of a table, view, stored procedure, function or trigger
      * to the webview (used by "Peek Definition"). Tables are scripted as CREATE TABLE
      * including primary key, foreign keys and indexes.
@@ -2686,6 +2738,10 @@ COMMIT TRANSACTION;
                         this.webviewSelectedConnection.set(panel.webview, message.connectionId);
                     }
                     await this.sendSchemaUpdate(panel.webview, message.connectionId);
+                    break;
+
+                case 'reloadSchema':
+                    await this.reloadSchema(panel.webview, message.connectionId, message.database);
                     break;
 
                 case 'requestObjectDefinition':
