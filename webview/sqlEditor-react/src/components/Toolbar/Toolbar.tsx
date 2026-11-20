@@ -4,6 +4,8 @@ import { ExecuteButton } from './ExecuteButton';
 import { ConnectionDropdown } from './ConnectionDropdown';
 import { DatabaseDropdown } from './DatabaseDropdown';
 import { FormatButton } from './FormatButton';
+import { SchemaStatus } from './SchemaStatus';
+import { summarizeSchemaLoads } from '../../services/schemaStatus';
 import './Toolbar.css';
 
 interface ToolbarProps {
@@ -29,7 +31,9 @@ export function Toolbar({
     manageConnections,
     connections,
     currentConnectionId,
+    schemaStatuses,
   } = useVSCode();
+  const schemaLoad = summarizeSchemaLoads(schemaStatuses ?? []);
 
   // Determine toolbar color from active connection
   const currentConnection = connections.find(c => c.id === currentConnectionId);
@@ -79,6 +83,9 @@ export function Toolbar({
       {/* Database Dropdown */}
       <DatabaseDropdown />
 
+      {/* Schema loading indicator */}
+      <SchemaStatus />
+
       {/* Connect Button (always visible) */}
       <button
         className="toolbar-button secondary"
@@ -103,8 +110,25 @@ export function Toolbar({
 
       {/* Status */}
       <span id="statusLabel">
-        {isExecuting ? 'Executing...' : isConnected ? 'Ready' : 'Not Connected'}
+        {isExecuting ? 'Executing...' : schemaLoad.active ? schemaLoad.label : isConnected ? 'Ready' : 'Not Connected'}
       </span>
+
+      {/* Progress bar while a schema is loading */}
+      {schemaLoad.active && (
+        <div
+          className="toolbar-progress"
+          role="progressbar"
+          aria-label={schemaLoad.label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={schemaLoad.indeterminate ? undefined : Math.round(schemaLoad.progress * 100)}
+        >
+          <div
+            className={`toolbar-progress-fill${schemaLoad.indeterminate ? ' indeterminate' : ''}`}
+            style={schemaLoad.indeterminate ? undefined : { width: `%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }

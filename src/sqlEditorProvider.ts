@@ -1512,6 +1512,19 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                 webview.postMessage({ type: 'databaseSchemaUpdate', requestId, database, ...payload });
             }
         };
+        const totalSteps = 3;
+        let completedSteps = 0;
+        const reportProgress = (detail: string) => {
+            if (!this.disposedWebviews.has(webview)) {
+                webview.postMessage({ type: 'databaseSchemaProgress', requestId, database, completed: completedSteps, total: totalSteps, detail });
+            }
+        };
+        const step = <T>(work: Promise<T>, label: string): Promise<T> =>
+            work.then((result) => {
+                completedSteps++;
+                reportProgress(`Loaded ${label}`);
+                return result;
+            });
 
         try {
             if (!database || typeof database !== 'string') {
@@ -1527,11 +1540,13 @@ export class SqlEditorProvider implements vscode.CustomTextEditorProvider {
                 return;
             }
 
+            reportProgress('Connecting');
             const pool = await this.connectionProvider.createDbPool(config.id, database);
+            reportProgress('Reading tables, views and procedures');
             const [tables, views, storedProcedures] = await Promise.all([
-                this.fetchObjectColumns(pool, ['U']),
-                this.fetchObjectColumns(pool, ['V']),
-                this.fetchStoredProcedures(pool)
+                step(this.fetchObjectColumns(pool, ['U']), 'tables'),
+                step(this.fetchObjectColumns(pool, ['V']), 'views'),
+                step(this.fetchStoredProcedures(pool), 'stored procedures')
             ]);
             reply({ schema: { tables, views, foreignKeys: [], storedProcedures } });
         } catch (error) {

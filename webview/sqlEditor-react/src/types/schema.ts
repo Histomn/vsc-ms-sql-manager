@@ -61,6 +61,23 @@ export interface DatabaseSchema {
   functions?: FunctionInfo[];
 }
 
+/** Loading state of the schema (tables, views, procedures) of one database. */
+export interface SchemaLoadStatus {
+  key: string;
+  connectionId: string;
+  database: string;
+  state: 'loading' | 'loaded' | 'error';
+  /** 0..1 when known; undefined means indeterminate. */
+  progress?: number;
+  detail?: string;
+  tables: number;
+  views: number;
+  procedures: number;
+  error?: string;
+  /** True for the database selected in the toolbar. */
+  isCurrent?: boolean;
+}
+
 export const emptySchema: DatabaseSchema = {
   tables: [],
   views: [],

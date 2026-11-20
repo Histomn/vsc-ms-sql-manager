@@ -1,5 +1,6 @@
 /* Toolbar container: match legacy webview spacing and background */
 #toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;

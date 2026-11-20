@@ -53,6 +53,16 @@ export interface DatabaseSchemaUpdateMessage {
   error?: string;
 }
 
+/** Progress of requestDatabaseSchema. */
+export interface DatabaseSchemaProgressMessage {
+  type: 'databaseSchemaProgress';
+  requestId: string;
+  database: string;
+  completed: number;
+  total: number;
+  detail?: string;
+}
+
 /** Response to requestObjectDefinition: script of a table, view or stored procedure. */
 export interface ObjectDefinitionMessage {
   type: 'objectDefinition';
@@ -183,6 +193,7 @@ export type IncomingMessage =
   | DatabasesUpdateMessage
   | SchemaUpdateMessage
   | DatabaseSchemaUpdateMessage
+  | DatabaseSchemaProgressMessage
   | ObjectDefinitionMessage
   | ExecutingMessage
   | ResultsMessage

@@ -10,7 +10,7 @@ import type {
   ResultsMessage,
   RelationResultsMessage,
 } from '../types/messages';
-import { DatabaseSchema, emptySchema } from '../types/schema';
+import { DatabaseSchema, SchemaLoadStatus, emptySchema } from '../types/schema';
 import { defaultEditorConfig } from '../types/messages';
 
 // ============================================
@@ -38,6 +38,8 @@ interface VSCodeState {
   
   // Schema
   dbSchema: DatabaseSchema;
+  /** Loading state of the connected database's schema ('idle' until the first request). */
+  schemaState: 'idle' | 'loading' | 'loaded';
   
   // Editor content
   editorContent: string;
@@ -88,6 +90,7 @@ type VSCodeAction =
   | { type: 'SET_CONNECTIONS'; connections: Connection[]; currentConnectionId?: string; currentDatabase?: string }
   | { type: 'SET_DATABASES'; databases: string[]; currentDatabase?: string }
   | { type: 'SET_SCHEMA'; schema: DatabaseSchema }
+  | { type: 'SET_SCHEMA_STATE'; schemaState: 'idle' | 'loading' | 'loaded' }
   | { type: 'SET_SNIPPETS'; snippets: Snippet[] }
   | { type: 'SET_EXECUTING'; isExecuting: boolean }
   | { type: 'SET_RESULTS'; payload: ResultsMessage }
@@ -106,6 +109,7 @@ const initialState: VSCodeState = {
   currentDatabase: null,
   databases: [],
   dbSchema: emptySchema,
+  schemaState: 'idle',
   editorContent: '',
   snippets: [],
   config: defaultEditorConfig,
@@ -167,6 +171,8 @@ function vsCodeReducer(state: VSCodeState, action: VSCodeAction): VSCodeState {
         connections: action.connections,
         currentConnectionId: currentId,
         currentDatabase: currentDb,
+        // The extension sends the schema right after the connection is known
+        schemaState: state.schemaState === 'idle' && currentId && currentDb ? 'loading' : state.schemaState,
       };
     }
     
@@ -181,7 +187,11 @@ function vsCodeReducer(state: VSCodeState, action: VSCodeAction): VSCodeState {
       return {
         ...state,
         dbSchema: action.schema,
+        schemaState: 'loaded',
       };
+
+    case 'SET_SCHEMA_STATE':
+      return { ...state, schemaState: action.schemaState };
       
     case 'SET_SNIPPETS':
       return {
@@ -312,6 +322,8 @@ interface VSCodeContextValue extends VSCodeState {
   getLoadedDatabaseSchema: (database: string) => DatabaseSchema | undefined;
   /** Increments each time another database's schema finishes loading. */
   externalSchemaVersion: number;
+  /** Schema loading state per database (connected database first), for the toolbar indicator. */
+  schemaStatuses: SchemaLoadStatus[];
 
   // Clipboard
   requestPaste: () => void;
@@ -363,7 +375,11 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
   // Cross-database schema cache and in-flight requests (refs: read by the message handler)
   const externalSchemasRef = useRef(new Map<string, DatabaseSchema>());
   const externalInflightRef = useRef(new Map<string, Promise<DatabaseSchema | null>>());
-  const externalPendingRef = useRef(new Map<string, { key: string; resolve: (s: DatabaseSchema | null) => void; timer: ReturnType<typeof setTimeout> }>());
+  const externalPendingRef = useRef(new Map<string, { key: string; database: string; resolve: (s: DatabaseSchema | null) => void; timer: ReturnType<typeof setTimeout> }>());
+  const [externalStatus, setExternalStatus] = useState<Record<string, SchemaLoadStatus>>({});
+  const patchExternalStatus = useCallback((key: string, patch: Partial<SchemaLoadStatus>) => {
+    setExternalStatus((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], ...patch } } : prev));
+  }, []);
   const externalRequestCounterRef = useRef(0);
   const [externalSchemaVersion, setExternalSchemaVersion] = useState(0);
 
@@ -409,18 +425,23 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     if (inflight) return inflight;
 
     const requestId = `dbschema-${++externalRequestCounterRef.current}`;
+    setExternalStatus((prev) => ({
+      ...prev,
+      [key]: { key, connectionId, database, state: 'loading', progress: 0, detail: 'Starting', tables: 0, views: 0, procedures: 0 },
+    }));
     const promise = new Promise<DatabaseSchema | null>((resolve) => {
       const timer = setTimeout(() => {
         externalPendingRef.current.delete(requestId);
         externalInflightRef.current.delete(key);
+        patchExternalStatus(key, { state: 'error', progress: undefined, error: 'Timed out while loading the schema' });
         resolve(null);
       }, 30000);
-      externalPendingRef.current.set(requestId, { key, resolve, timer });
+      externalPendingRef.current.set(requestId, { key, database, resolve, timer });
       postMessage({ type: 'requestDatabaseSchema', requestId, connectionId, database });
     });
     externalInflightRef.current.set(key, promise);
     return promise;
-  }, [postMessage]);
+  }, [postMessage, patchExternalStatus]);
   
   // Message handler
   useEffect(() => {
@@ -492,12 +513,33 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
             if (message.schema) {
               const schema: DatabaseSchema = { ...emptySchema, ...message.schema };
               externalSchemasRef.current.set(pending.key, schema);
+              patchExternalStatus(pending.key, {
+                state: 'loaded',
+                progress: 1,
+                detail: undefined,
+                error: undefined,
+                tables: schema.tables?.length ?? 0,
+                views: schema.views?.length ?? 0,
+                procedures: schema.storedProcedures?.length ?? 0,
+              });
               setExternalSchemaVersion((v) => v + 1);
               pending.resolve(schema);
             } else {
               console.warn('[VSCode] Failed to load schema for database', message.database, message.error);
+              patchExternalStatus(pending.key, { state: 'error', progress: undefined, error: message.error ?? 'Failed to load the schema' });
               pending.resolve(null);
             }
+          }
+          break;
+        }
+
+        case 'databaseSchemaProgress': {
+          const pending = externalPendingRef.current.get(message.requestId);
+          if (pending) {
+            patchExternalStatus(pending.key, {
+              progress: message.total > 0 ? message.completed / message.total : undefined,
+              detail: message.detail,
+            });
           }
           break;
         }
@@ -670,6 +712,7 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     // Optimistic update: update local state immediately so the dropdown reflects
     // the selection without waiting for the extension round-trip
     dispatch({ type: 'SET_DATABASES', databases: state.databases, currentDatabase: databaseName });
+    dispatch({ type: 'SET_SCHEMA_STATE', schemaState: 'loading' });
     postMessage({ 
       type: 'switchDatabase', 
       connectionId: state.currentConnectionId,
@@ -721,6 +764,37 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'SET_HISTORY_INFO', info: null });
   }, []);
   
+  // A schema request that never gets an answer must not leave the indicator spinning
+  useEffect(() => {
+    if (state.schemaState !== 'loading') return;
+    const timer = setTimeout(() => dispatch({ type: 'SET_SCHEMA_STATE', schemaState: 'idle' }), 60000);
+    return () => clearTimeout(timer);
+  }, [state.schemaState]);
+
+  const schemaStatuses = useMemo<SchemaLoadStatus[]>(() => {
+    const list: SchemaLoadStatus[] = [];
+    const connectionId = state.currentConnectionId;
+    const currentDb = state.currentDatabase;
+    if (connectionId && currentDb && state.schemaState !== 'idle') {
+      list.push({
+        key: `${connectionId}::current`,
+        connectionId,
+        database: currentDb,
+        state: state.schemaState === 'loading' ? 'loading' : 'loaded',
+        detail: state.schemaState === 'loading' ? 'Reading schema' : undefined,
+        tables: state.dbSchema.tables?.length ?? 0,
+        views: state.dbSchema.views?.length ?? 0,
+        procedures: state.dbSchema.storedProcedures?.length ?? 0,
+        isCurrent: true,
+      });
+    }
+    Object.values(externalStatus)
+      .filter((s) => s.connectionId === connectionId && s.database.toLowerCase() !== currentDb?.toLowerCase())
+      .sort((a, b) => a.database.localeCompare(b.database))
+      .forEach((s) => list.push(s));
+    return list;
+  }, [state.currentConnectionId, state.currentDatabase, state.schemaState, state.dbSchema, externalStatus]);
+
   // Derived state
   const isConnected = state.currentConnectionId !== null;
   
@@ -743,6 +817,7 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     requestObjectDefinition,
     getLoadedDatabaseSchema,
     externalSchemaVersion,
+    schemaStatuses,
     requestPaste,
     clearPasteContent,
     dismissHistoryInfo,
@@ -764,6 +839,7 @@ export function VSCodeProvider({ children }: { children: React.ReactNode }) {
     requestObjectDefinition,
     getLoadedDatabaseSchema,
     externalSchemaVersion,
+    schemaStatuses,
     requestPaste,
     clearPasteContent,
     dismissHistoryInfo,
