@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getStatementAtOffset } from './sqlStatement';
+import { getStatementAtOffset, getStatementBoundsAtOffset } from './sqlStatement';
 import { parseKeybinding, parseKeybindings, type MonacoKeyApi } from './keybindingParser';
 
 const at = (sql: string, marker = '|') => {
@@ -85,5 +85,36 @@ describe('parseKeybindings', () => {
   it('returns an empty list for empty input', () => {
     expect(parseKeybindings('', api)).toEqual([]);
     expect(parseKeybindings(undefined, api)).toEqual([]);
+  });
+});
+describe('getStatementBoundsAtOffset', () => {
+  const bounds = (sql: string) => {
+    const offset = sql.indexOf('|');
+    const clean = sql.replace('|', '');
+    const b = getStatementBoundsAtOffset(clean, offset);
+    return clean.slice(b.start, b.end);
+  };
+
+  it('returns the whole statement the cursor is in, untrimmed', () => {
+    expect(bounds('SELECT 1;\nSELECT a FROM t WHERE x|\nORDER BY a;\nSELECT 3')).toBe('\nSELECT a FROM t WHERE x\nORDER BY a;');
+  });
+
+  it('puts the position right after a semicolon (and the blank text after it) into the next statement', () => {
+    expect(bounds('SELECT 1;|')).toBe('');
+    expect(bounds('SELECT 1;\n\n|')).toBe('\n\n');
+    expect(bounds('SELECT 1; SELECT 2|')).toBe(' SELECT 2');
+  });
+
+  it('keeps a cursor at the end of a statement before ; in that statement', () => {
+    expect(bounds('SELECT 1|;\nSELECT 2;')).toBe('SELECT 1;');
+  });
+
+  it('splits on GO lines, including a cursor at the end of the last line before GO', () => {
+    expect(bounds('SELECT 1|\nGO\nSELECT 2')).toBe('SELECT 1');
+    expect(bounds('SELECT 1\nGO\nSELECT 2|')).toBe('\nSELECT 2');
+  });
+
+  it('ignores semicolons inside strings, comments and brackets', () => {
+    expect(bounds("SELECT ';', [a;b] -- ;\n, x|")).toBe("SELECT ';', [a;b] -- ;\n, x");
   });
 });

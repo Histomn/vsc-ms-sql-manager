@@ -18,6 +18,8 @@ export interface StatementRange {
 interface Segment {
   start: number;
   end: number;
+  /** True when the segment ends with a `;` (the text after the `;` belongs to the next statement). */
+  terminated?: boolean;
 }
 
 function splitSegments(sql: string): Segment[] {
@@ -74,7 +76,7 @@ function splitSegments(sql: string): Segment[] {
       continue;
     }
     if (ch === ';') {
-      segments.push({ start: segStart, end: i + 1 });
+      segments.push({ start: segStart, end: i + 1, terminated: true });
       segStart = i + 1;
       i++;
       continue;
@@ -145,4 +147,18 @@ export function getStatementAtOffset(sql: string, offset: number): StatementRang
     if (ranges[k].range) return ranges[k].range;
   }
   return null;
+}
+/**
+ * Returns the bounds of the statement the offset belongs to, without trimming and without
+ * falling back to a neighbouring statement. `;` and `GO` lines separate statements. An offset
+ * right after a `;` (or in the blank text after it) belongs to the following statement, so a
+ * new statement that is being typed is analysed on its own.
+ */
+export function getStatementBoundsAtOffset(sql: string, offset: number): { start: number; end: number } {
+  const segments = splitSegments(sql);
+  const found = segments.find((seg) => (seg.terminated ? offset < seg.end : offset <= seg.end));
+  // Past the end of the text, or right after the final `;`: the (empty) statement being typed
+  const seg = found ?? segments[segments.length - 1];
+  if (!found && seg.terminated) return { start: sql.length, end: sql.length };
+  return { start: seg.start, end: seg.end };
 }

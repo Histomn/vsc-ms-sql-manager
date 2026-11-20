@@ -184,11 +184,11 @@ export function findTableForAlias(
 
   const patterns = [
     // Pattern with brackets: FROM [schema].[table] [alias] or FROM [table] [alias]
-    new RegExp(`from\\s+(?:\\[(\\w+)\\]\\.)?\\[(\\w+)\\]\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|$)`, 'i'),
-    new RegExp(`join\\s+(?:\\[(\\w+)\\]\\.)?\\[(\\w+)\\]\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|$)`, 'i'),
+    new RegExp(`from\\s+(?:\\[(\\w+)\\]\\.)?\\[(\\w+)\\]\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|;|\\)|$)`, 'i'),
+    new RegExp(`join\\s+(?:\\[(\\w+)\\]\\.)?\\[(\\w+)\\]\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|;|\\)|$)`, 'i'),
     // Pattern without brackets: FROM schema.table alias or FROM table alias
-    new RegExp(`from\\s+(?:(\\w+)\\.)?(\\w+)\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|$)`, 'i'),
-    new RegExp(`join\\s+(?:(\\w+)\\.)?(\\w+)\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|$)`, 'i'),
+    new RegExp(`from\\s+(?:(\\w+)\\.)?(\\w+)\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|;|\\)|$)`, 'i'),
+    new RegExp(`join\\s+(?:(\\w+)\\.)?(\\w+)\\s+(?:as\\s+)?(?:\\[${lowerAlias}\\]|${lowerAlias})(?:\\s|,|;|\\)|$)`, 'i'),
   ];
 
   for (const pattern of patterns) {

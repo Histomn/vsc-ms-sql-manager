@@ -23,6 +23,7 @@ import {
   formatProcedureParameters,
   prepareCrossDatabaseQuery,
   getJoinKeySuggestions,
+  getStatementBoundsAtOffset,
   createUniqueAlias,
   isDeleteFromContext,
   isTableReferencePosition,
@@ -90,19 +91,25 @@ export function useCompletionProvider(
         const suggestions: languages.CompletionItem[] = [];
         const fullText = model.getValue();
 
+        // Only the statement the cursor is in is analysed (`;` and `GO` separate statements), so
+        // aliases, tables and CTEs of other statements in the editor do not leak into the suggestions.
+        const cursorOffset = textUntilPosition.length;
+        const statementBounds = getStatementBoundsAtOffset(fullText, cursorOffset);
+        const statementOffset = Math.max(0, cursorOffset - statementBounds.start);
+
         // References like `OtherDb.dbo.Table` are resolved against that database's schema:
         // the `OtherDb.` prefix is blanked out (same length) and the table is added to the schema.
         const cross = crossDbRef.current;
-        const prepared = prepareCrossDatabaseQuery(fullText, dbSchema, cross);
+        const prepared = prepareCrossDatabaseQuery(fullText.slice(statementBounds.start, statementBounds.end), dbSchema, cross);
         const analysisText = prepared.sql;
-        const analysisTextUntilPosition = analysisText.slice(0, textUntilPosition.length);
+        const analysisTextUntilPosition = analysisText.slice(0, statementOffset);
         prepared.missing.forEach((databaseName) => { void cross?.requestSchema(databaseName); });
 
         // Build augmented schema with CTE definitions as virtual tables
         const augmentedSchema = buildAugmentedSchema(prepared.schema, analysisText);
 
         // ---- Automatic table alias (FROM / JOIN table suggestions insert `Table alias`) ----
-        const restOfLine = analysisText.slice(textUntilPosition.length).split(/\r?\n/)[0] ?? '';
+        const restOfLine = analysisText.slice(statementOffset).split(/\r?\n/)[0] ?? '';
         const aliasAllowed =
           optionsRef.current?.autoAlias !== false &&
           !isDeleteFromContext(analysisTextUntilPosition) &&
@@ -233,7 +240,7 @@ export function useCompletionProvider(
         const dotMatch = lineUntilPosition.match(/(\w+)\.\w*$/);
         if (dotMatch) {
           const prefix = dotMatch[1];
-          // Use fullText so aliases defined after cursor (e.g. FROM below SELECT) are resolved
+          // Use the whole statement so aliases defined after the cursor (e.g. FROM below SELECT) are resolved
           const tableAlias = findTableForAlias(analysisText, prefix, augmentedSchema);
 
           if (tableAlias) {

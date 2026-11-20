@@ -5,7 +5,7 @@ import type { DatabaseSchema } from '../../../types/schema';
 
 const currentSchema: DatabaseSchema = {
   tables: [{ schema: 'dbo', name: 'Users', columns: [{ name: 'Id', type: 'int', nullable: false }] }],
-  views: [{ schema: 'dbo', name: 'vUsers', columns: [] }],
+  views: [{ schema: 'dbo', name: 'vUsers', columns: [{ name: 'Id', type: 'int', nullable: false }, { name: 'Flag', type: 'bit', nullable: false }] }],
   foreignKeys: [],
   storedProcedures: [
     { schema: 'dbo', name: 'usp_get_users', parameters: [{ name: '@id', type: 'int', mode: 'IN' }] },
@@ -33,17 +33,22 @@ function setup(crossDb: CrossDatabaseContext, options?: { autoAlias?: boolean })
   renderHook(() => useCompletionProvider({ current: monaco } as any, currentSchema, true, crossDb, options));
   const provider = (registerCompletionItemProvider.mock.calls as any[])[0][1];
 
-  return async (sql: string) => {
+  return async (text: string) => {
+    // | marks the cursor; without it the cursor is at the end of the text
+    const cursor = text.includes('|') ? text.indexOf('|') : text.length;
+    const doc = text.replace('|', '');
+    const before = doc.slice(0, cursor);
     const model = {
       getWordUntilPosition: () => {
-        const word = /[\w$#@]*$/.exec(sql)?.[0] ?? '';
-        return { word, startColumn: sql.length - word.length + 1, endColumn: sql.length + 1 };
+        const word = /[\w$#@]*$/.exec(before)?.[0] ?? '';
+        return { word, startColumn: before.length - word.length + 1, endColumn: before.length + 1 };
       },
+      // The whole text is treated as one line (columns are offsets), as in the other provider tests
       getValueInRange: ({ startColumn, endColumn, startLineNumber, endLineNumber }: any) =>
-        startLineNumber === 1 && endLineNumber === 1 ? sql.slice(startColumn - 1, endColumn - 1) : sql,
-      getValue: () => sql,
+        startLineNumber === 1 && endLineNumber === 1 ? doc.slice(startColumn - 1, endColumn - 1) : before,
+      getValue: () => doc,
     };
-    const result = await provider.provideCompletionItems(model, { lineNumber: 1, column: sql.length + 1 });
+    const result = await provider.provideCompletionItems(model, { lineNumber: 1, column: cursor + 1 });
     return (result.suggestions as any[]).map((s) => ({ label: s.label as string, kind: s.kind as string, insertText: s.insertText as string, detail: s.detail as string }));
   };
 }
@@ -76,10 +81,10 @@ describe('useCompletionProvider cross-database completion', () => {
     expect(items.map((i) => i.insertText)).toEqual(['Customers c']);
   });
 
-  it('keeps the alias unique within the query', async () => {
+  it('keeps the alias unique within the statement', async () => {
     const { crossDb } = makeCross();
     const run = setup(crossDb);
-    const items = await run('SELECT * FROM Users u;\nSELECT * FROM ');
+    const items = await run('SELECT * FROM Users u INNER JOIN Us');
     expect(items.find((i) => i.label === 'Users')?.insertText).toBe('Users u2');
   });
 
@@ -90,6 +95,47 @@ describe('useCompletionProvider cross-database completion', () => {
 
     const off = setup(crossDb, { autoAlias: false });
     expect((await off('SELECT * FROM ')).find((i) => i.label === 'Users')?.insertText).toBe('Users');
+  });
+
+  describe('per statement analysis', () => {
+    const twoStatements =
+      'SELECT a.Id FROM Users a INNER JOIN vUsers v ON a.Id = v.Id;\n' +
+      'SELECT |\nFROM Users a2\nINNER JOIN vUsers v2 ON a2.Id = v2.Id;';
+
+    it('uses the aliases of the current statement, not those of other statements', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      const labels = (await run(twoStatements)).map((i) => i.label);
+      expect(labels).toContain('a2.Id');
+      expect(labels).toContain('v2.Flag');
+      expect(labels).not.toContain('a.Id');
+      expect(labels).not.toContain('v.Flag');
+    });
+
+    it('resolves `alias.` against the current statement', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      // `a` is Users in the first statement and vUsers in the second: the second one wins
+      const second = await run('SELECT 1 FROM Users a;\nSELECT a.| FROM vUsers a;');
+      expect(second.map((i) => i.label)).toEqual(['Id', 'Flag']);
+      const first = await run('SELECT a.| FROM Users a;\nSELECT 1 FROM vUsers a;');
+      expect(first.map((i) => i.label)).toEqual(['Id']);
+    });
+
+    it('starts alias numbering again in every statement', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      const items = await run('SELECT * FROM Users u;\nSELECT * FROM ');
+      expect(items.find((i) => i.label === 'Users')?.insertText).toBe('Users u');
+    });
+
+
+    it('recommends join keys from the current statement only', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      const keys = (await run('SELECT 1 FROM Users x JOIN vUsers y ON x.Id = y.Id;\nSELECT * FROM Users u JOIN vUsers v ON |')).map((i) => i.label);
+      expect(keys.some((k) => k.startsWith('x.') || k.startsWith('y.'))).toBe(false);
+    });
   });
 
   it('keeps suggesting tables when a partial name is typed after FROM (Ctrl+Space)', async () => {

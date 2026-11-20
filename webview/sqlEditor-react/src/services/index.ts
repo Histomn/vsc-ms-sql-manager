@@ -12,3 +12,4 @@ export * from './objectAtCursor';
 export * from './joinKeySuggestions';
 export * from './autoAlias';
 export * from './schemaStatus';
+export * from './sqlStatement';
