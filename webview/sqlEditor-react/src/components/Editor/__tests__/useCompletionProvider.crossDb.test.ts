@@ -97,6 +97,33 @@ describe('useCompletionProvider cross-database completion', () => {
     expect((await off('SELECT * FROM ')).find((i) => i.label === 'Users')?.insertText).toBe('Users');
   });
 
+  describe('alias-qualified columns', () => {
+    it('shows only the alias form when the table has an alias', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      const labels = (await run('SELECT * FROM Users u WHERE ')).map((i) => i.label);
+      expect(labels).toContain('u.Id');
+      expect(labels).not.toContain('Id');
+    });
+
+    it('shows the plain column name when the table has no alias and is the only table', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      const labels = (await run('SELECT * FROM Users WHERE ')).map((i) => i.label);
+      expect(labels).toContain('Id');
+      expect(labels).not.toContain('Users.Id');
+    });
+
+    it('shows only qualified columns when several tables are in the statement', async () => {
+      const { crossDb } = makeCross();
+      const run = setup(crossDb);
+      const labels = (await run('SELECT * FROM Users u JOIN vUsers v ON u.Id = v.Id WHERE ')).map((i) => i.label);
+      expect(labels).toEqual(expect.arrayContaining(['u.Id', 'v.Id', 'v.Flag']));
+      expect(labels).not.toContain('Id');
+      expect(labels).not.toContain('Flag');
+    });
+  });
+
   describe('per statement analysis', () => {
     const twoStatements =
       'SELECT a.Id FROM Users a INNER JOIN vUsers v ON a.Id = v.Id;\n' +

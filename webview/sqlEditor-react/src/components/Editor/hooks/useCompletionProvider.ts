@@ -463,6 +463,8 @@ export function useCompletionProvider(
                     range,
                     sortText: `1_${col.name}`,
                   });
+                  // The alias-qualified form replaces the plain column name
+                  return;
                 }
                 suggestions.push({
                   label: col.name,
